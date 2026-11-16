@@ -1,0 +1,20 @@
+{
+    "type": "chitu",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "chitu",
+            "sdkconfig_append": [
+                "CONFIG_BOARD_TYPE_CHITU=y",
+                "CONFIG_OLED_SH1106_128X64=y",
+                "CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y",
+                "CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y",
+                "CONFIG_PARTITION_TABLE_CUSTOM=y",
+                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"main/boards/chitu/partitions.csv\"",
+                "CONFIG_LWIP_MAX_SOCKETS=24",
+                "CONFIG_ESP_HTTPS_SERVER_ENABLE=y",
+                "CONFIG_HTTPD_WS_SUPPORT=y"
+            ]
+        }
+    ]
+}
