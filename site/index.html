@@ -162,7 +162,8 @@
 </main>
 <script>
 // Wake word menu: one firmware per wake word, built by GitHub
-const NOTES = { wn9_hiesp: "recommended", wn9_alexa: "very reliable" };
+const NOTES = { wn9_hiesp: "recommended", wn9_alexa: "very reliable",
+                custom_hey_chitu: "custom, new", custom_hello_chitu: "custom, new" };
 const sel = document.getElementById("ww"), btn = document.getElementById("installer");
 fetch("wakewords.json").then(r => r.json()).then(words => {
   sel.innerHTML = "";
@@ -179,7 +180,9 @@ sel.onchange = () => {
   const label = (o && o.dataset.label) || "Hi ESP";
   btn.setAttribute("manifest", "manifest-" + sel.value + ".json");
   document.getElementById("wwhint").innerHTML = "Chitu wakes up when you say <b>“" + label + "”</b>." +
-    (NOTES[sel.value] ? "" : " Experimental words are trained on computer voices: test them, and switch back if Chitu doesn't respond well.");
+    (sel.value.startsWith("custom_")
+      ? " Custom phrase: recognised from its spelling, not from a trained voice model. Speak clearly, within about 1 m. If it misses a lot, switch back to Hi ESP."
+      : NOTES[sel.value] ? "" : " Experimental words are trained on computer voices: test them, and switch back if Chitu doesn't respond well.");
   document.querySelectorAll(".wwname").forEach(e => e.textContent = "“" + label + "”");
 };
 </script>

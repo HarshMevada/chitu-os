@@ -330,6 +330,25 @@ def _wake_word_sdkconfig_options(
     target: str,
 ) -> tuple[str, list[str], list[str]]:
     """Map a wake-word model to implementation and model Kconfig options."""
+    # Chitu OS: custom phrase via ESP-SR MultiNet7 (e.g. "custom:hey chitu").
+    # MultiNet7 English turns lowercase text into sounds on the device: no training needed.
+    if wake_word.strip().lower().startswith("custom:"):
+        phrase = wake_word.split(":", 1)[1].strip().lower()
+        if not phrase or '"' in phrase:
+            raise ValueError("Custom wake word needs a phrase, e.g. custom:hey chitu")
+        options = [
+            "CONFIG_WAKE_WORD_DISABLED=n",
+            "CONFIG_USE_ESP_WAKE_WORD=n",
+            "CONFIG_USE_AFE_WAKE_WORD=n",
+            "CONFIG_USE_CUSTOM_WAKE_WORD=y",
+            f'CONFIG_CUSTOM_WAKE_WORD="{phrase}"',
+            f'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="{phrase.title()}"',
+            "CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=20",
+            "CONFIG_SR_MN_CN_NONE=y",
+            "CONFIG_SR_MN_EN_MULTINET7_QUANT=y",
+        ]
+        return "custom", options, ["CONFIG_USE_CUSTOM_WAKE_WORD"]
+
     normalized = wake_word.strip().casefold().replace("-", "_")
     if normalized == "nihaoxiaozhi":
         normalized = (

@@ -33,18 +33,21 @@ jobs:
         # One firmware per wake word. Words whose model is missing simply fail
         # here and are left out of the installer's wake word menu.
         include:
-          - { model: wn9_hiesp,         label: "Hi ESP" }
-          - { model: wn9_alexa,         label: "Alexa" }
-          - { model: wn9_hiwalle_tts2,  label: "Hi Wall-E" }
-          - { model: wn9_jarvis_tts,    label: "Jarvis" }
-          - { model: wn9_hijason_tts2,  label: "Hi Jason" }
-          - { model: wn9_sophia_tts,    label: "Sophia" }
-          - { model: wn9_computer_tts,  label: "Computer" }
-          - { model: wn9_hijoy_tts,     label: "Hi Joy" }
-          - { model: wn9_hiandy_tts2,   label: "Hi Andy" }
-          - { model: wn9_heywillow_tts, label: "Hey Willow" }
-          - { model: wn9_mycroft_tts,   label: "Mycroft" }
-          - { model: wn9_heykira_tts3,  label: "Hey Kira" }
+          - { key: wn9_hiesp, model: wn9_hiesp,         label: "Hi ESP" }
+          - { key: wn9_alexa, model: wn9_alexa,         label: "Alexa" }
+          - { key: wn9_hiwalle_tts2, model: wn9_hiwalle_tts2,  label: "Hi Wall-E" }
+          - { key: wn9_jarvis_tts, model: wn9_jarvis_tts,    label: "Jarvis" }
+          - { key: wn9_hijason_tts2, model: wn9_hijason_tts2,  label: "Hi Jason" }
+          - { key: wn9_sophia_tts, model: wn9_sophia_tts,    label: "Sophia" }
+          - { key: wn9_computer_tts, model: wn9_computer_tts,  label: "Computer" }
+          - { key: wn9_hijoy_tts, model: wn9_hijoy_tts,     label: "Hi Joy" }
+          - { key: wn9_hiandy_tts2, model: wn9_hiandy_tts2,   label: "Hi Andy" }
+          - { key: wn9_heywillow_tts, model: wn9_heywillow_tts, label: "Hey Willow" }
+          - { key: wn9_mycroft_tts, model: wn9_mycroft_tts,   label: "Mycroft" }
+          - { key: wn9_heykira_tts3, model: wn9_heykira_tts3,  label: "Hey Kira" }
+          # Custom phrases (MultiNet, no training). Retried now that the mic DC offset is fixed.
+          - { key: custom_hey_chitu,   model: "custom:hey chitu",   label: "Hey Chitu" }
+          - { key: custom_hello_chitu, model: "custom:hello chitu", label: "Hello Chitu" }
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v7
@@ -80,14 +83,14 @@ jobs:
           python3 - <<'PY'
           import json, os, shutil
           args = json.load(open("build/flasher_args.json"))
-          out = "out/${{ matrix.model }}"
+          out = "out/${{ matrix.key }}"
           os.makedirs(out, exist_ok=True)
           parts = []
           for offset, path in sorted(args["flash_files"].items(), key=lambda kv: int(kv[0], 16)):
               name = os.path.basename(path)
               shutil.copy(os.path.join("build", path), os.path.join(out, name))
               parts.append({"path": name, "offset": int(offset, 16)})
-          json.dump({"label": "${{ matrix.label }}", "model": "${{ matrix.model }}", "parts": parts},
+          json.dump({"label": "${{ matrix.label }}", "model": "${{ matrix.key }}", "parts": parts},
                     open(os.path.join(out, "parts.json"), "w"))
           print(parts)
           PY
@@ -102,7 +105,7 @@ jobs:
       - name: Save firmware
         uses: actions/upload-artifact@v7
         with:
-          name: chitu-fw-${{ matrix.model }}
+          name: chitu-fw-${{ matrix.key }}
           path: out
           if-no-files-found: error
 
@@ -175,7 +178,7 @@ jobs:
           VERSION="$VERSION" python3 - <<'PY'
           import json, os, glob
           version = os.environ["VERSION"]
-          order = ["wn9_hiesp", "wn9_alexa", "wn9_hiwalle_tts2", "wn9_jarvis_tts", "wn9_hijason_tts2",
+          order = ["wn9_hiesp", "custom_hey_chitu", "custom_hello_chitu", "wn9_alexa", "wn9_hiwalle_tts2", "wn9_jarvis_tts", "wn9_hijason_tts2",
                    "wn9_sophia_tts", "wn9_computer_tts", "wn9_hijoy_tts", "wn9_hiandy_tts2",
                    "wn9_heywillow_tts", "wn9_mycroft_tts", "wn9_heykira_tts3"]
           words = []
