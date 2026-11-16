@@ -2,6 +2,12 @@
 
 #include "chitu_eyes_display.h"
 #include "chitu_emoji_font.h"
+#include "application.h"
+#include "assets/lang_config.h"
+
+#include <ctime>
+
+extern "C" const lv_font_t chitu_clock_font;
 
 #include <esp_log.h>
 #include <esp_random.h>
@@ -18,13 +24,15 @@ namespace {
 inline lv_color_t Lit() { return lv_color_black(); }
 inline lv_color_t Off() { return lv_color_white(); }
 
-constexpr int kStatusBarHeight = 16;
-constexpr int kEyeW = 36;
-constexpr int kEyeH = 34;
-constexpr int kEyeRadius = 9;
-constexpr int kEyeCenterX[2] = {36, 92};
+// Expressions only: the eyes use the whole screen (the xiaozhi status bar and
+// texts stay underneath and are shown only for Wi-Fi setup and activation).
+constexpr int kStatusBarHeight = 0;
+constexpr int kEyeW = 40;
+constexpr int kEyeH = 42;
+constexpr int kEyeRadius = 11;
+constexpr int kEyeCenterX[2] = {35, 93};
 constexpr float kLookRangeX = 16.0f;
-constexpr float kLookRangeY = 7.0f;
+constexpr float kLookRangeY = 9.0f;
 
 inline float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 inline uint32_t RandRange(uint32_t lo, uint32_t hi) { return lo + esp_random() % (hi - lo + 1); }
@@ -80,8 +88,8 @@ void ChituEyesDisplay::SetupUI() {
     layer_ = MakeBox(screen, Off());
     lv_obj_set_size(layer_, width_, height_ - kStatusBarHeight);
     lv_obj_set_pos(layer_, 0, kStatusBarHeight);
-    // Above the chat/emoji content, below the status bar
-    lv_obj_move_to_index(layer_, 1);
+    // On top of everything xiaozhi draws (status bar, texts)
+    lv_obj_move_foreground(layer_);
 
     for (int i = 0; i < 2; i++) {
         eye_[i] = MakeBox(layer_, Lit());
@@ -129,7 +137,7 @@ void ChituEyesDisplay::SetupUI() {
     msg_layer_ = MakeBox(screen, Off());
     lv_obj_set_size(msg_layer_, width_, area_h);
     lv_obj_set_pos(msg_layer_, 0, kStatusBarHeight);
-    lv_obj_move_to_index(msg_layer_, lv_obj_get_index(layer_) + 1);
+    lv_obj_move_foreground(msg_layer_);
     lv_obj_set_style_clip_corner(msg_layer_, false, 0);
     msg_label_ = lv_label_create(msg_layer_);
     lv_obj_set_style_text_color(msg_label_, Lit(), 0);
@@ -137,6 +145,33 @@ void ChituEyesDisplay::SetupUI() {
     lv_obj_set_style_text_align(msg_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(msg_label_, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_add_flag(msg_layer_, LV_OBJ_FLAG_HIDDEN);
+
+    // Big clock (shown now and then while idle)
+    clock_layer_ = MakeBox(screen, Off());
+    lv_obj_set_size(clock_layer_, width_, height_);
+    lv_obj_set_pos(clock_layer_, 0, 0);
+    lv_obj_move_foreground(clock_layer_);
+    clock_label_ = lv_label_create(clock_layer_);
+    lv_obj_set_style_text_font(clock_label_, &chitu_clock_font, 0);
+    lv_obj_set_style_text_color(clock_label_, Lit(), 0);
+    lv_obj_set_style_text_letter_space(clock_label_, -1, 0);
+    lv_obj_center(clock_label_);
+    lv_obj_add_flag(clock_layer_, LV_OBJ_FLAG_HIDDEN);
+
+    // QR code for the phone console (shown when someone asks for the address)
+    qr_layer_ = MakeBox(screen, Off());
+    lv_obj_set_size(qr_layer_, width_, height_);
+    lv_obj_set_pos(qr_layer_, 0, 0);
+    lv_obj_move_foreground(qr_layer_);
+    lv_obj_t* quiet = MakeBox(qr_layer_, Lit());  // lit square = the QR's light background
+    lv_obj_set_size(quiet, height_, height_);
+    lv_obj_center(quiet);
+    qr_ = lv_qrcode_create(quiet);
+    lv_qrcode_set_size(qr_, height_ - 6);
+    lv_qrcode_set_dark_color(qr_, Off());   // dark modules = unlit pixels
+    lv_qrcode_set_light_color(qr_, Lit());  // background = lit pixels
+    lv_obj_center(qr_);
+    lv_obj_add_flag(qr_layer_, LV_OBJ_FLAG_HIDDEN);
 
     bool wander = true;
     base_ = ShapeFor("neutral", &wander);
@@ -260,8 +295,8 @@ void ChituEyesDisplay::Render() {
         const EyeParams& p = current_.eye[i];
         int w = std::max(4, (int)lroundf(kEyeW * current_.w_scale));
         int h = std::max(2, (int)lroundf(kEyeH * p.h_scale * blink_));
-        int cx = kEyeCenterX[i] + (int)lroundf(current_.dx + fx_dx_);
-        int cy = area_h / 2 + (int)lroundf(current_.dy + fx_dy_);
+        int cx = kEyeCenterX[i] + (int)lroundf(current_.dx + fx_dx_ + mode_dx_);
+        int cy = area_h / 2 + (int)lroundf(current_.dy + fx_dy_ + mode_dy_);
 
         lv_obj_set_size(eye_[i], w, h);
         lv_obj_set_pos(eye_[i], cx - w / 2, cy - h / 2);
@@ -452,8 +487,97 @@ void ChituEyesDisplay::SetChatMessage(const char* role, const char* content) {
     DisplayLockGuard lock(this);
     bool is_system_text =
         role != nullptr && strcmp(role, "system") == 0 && content != nullptr && content[0] != '\0';
-    // Wi-Fi setup / activation instructions must be readable
-    ShowEyes(!is_system_text);
+    // Only Wi-Fi setup and the activation code are shown as text; everything else
+    // (subtitles, status, errors) stays as expressions.
+    auto state = Application::GetInstance().GetDeviceState();
+    bool setup = state == kDeviceStateWifiConfiguring || state == kDeviceStateActivating;
+    ShowEyes(!(is_system_text && setup));
+}
+
+void ChituEyesDisplay::SetStatus(const char* status) {
+    OledDisplay::SetStatus(status);  // kept underneath for setup screens
+    if (status == nullptr) {
+        return;
+    }
+    DisplayLockGuard lock(this);
+    if (layer_ == nullptr) {
+        return;
+    }
+    using namespace Lang::Strings;
+    Mode mode = Mode::kIdle;
+    if (strcmp(status, LISTENING) == 0) {
+        mode = Mode::kListening;
+    } else if (strcmp(status, SPEAKING) == 0) {
+        mode = Mode::kSpeaking;
+    } else if (strcmp(status, CONNECTING) == 0 || strcmp(status, LOADING_PROTOCOL) == 0 ||
+               strcmp(status, CHECKING_NEW_VERSION) == 0 || strcmp(status, REGISTERING_NETWORK) == 0) {
+        mode = Mode::kThinking;
+    }
+    if (mode == mode_) {
+        return;
+    }
+    mode_ = mode;
+    lv_anim_delete(this, ModeAnimCb);
+    mode_dx_ = 0;
+    mode_dy_ = 0;
+    if (mode != Mode::kIdle) {
+        SetSleeping(false);
+        // the clock makes way; a QR code someone asked for stays up
+        if (clock_layer_ != nullptr && !lv_obj_has_flag(clock_layer_, LV_OBJ_FLAG_HIDDEN)) {
+            HideOverlays();
+        }
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, this);
+        lv_anim_set_exec_cb(&a, ModeAnimCb);
+        lv_anim_set_values(&a, 0, 100000);
+        lv_anim_set_duration(&a, 100000);
+        lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+        lv_anim_start(&a);
+    }
+    if (mode == Mode::kListening) {
+        // all ears: big round eyes looking up at you
+        bool wander = false;
+        base_ = ShapeFor("surprised", &wander);
+        base_.dy -= 3;
+        idle_wander_ = false;
+        TransitionTo(base_, 200);
+    } else if (mode == Mode::kThinking) {
+        bool wander = false;
+        base_ = ShapeFor("thinking", &wander);
+        idle_wander_ = false;
+        TransitionTo(base_, 250);
+    } else if (mode == Mode::kIdle && !sleeping_) {
+        bool wander = true;
+        base_ = ShapeFor("neutral", &wander);  // calm again after a conversation
+        idle_wander_ = wander;
+        TransitionTo(base_, 300);
+    }
+}
+
+// Small continuous motion that shows what Chitu is doing
+void ChituEyesDisplay::ModeAnimCb(void* var, int32_t value) {
+    auto* self = static_cast<ChituEyesDisplay*>(var);
+    float t = value / 1000.0f;
+    constexpr float kTwoPi = 6.2831853f;
+    switch (self->mode_) {
+        case Mode::kListening:  // slow "breathing" lean, like paying attention
+            self->mode_dx_ = 0;
+            self->mode_dy_ = 1.5f * sinf(t * kTwoPi / 1.4f);
+            break;
+        case Mode::kSpeaking:  // little nods while talking
+            self->mode_dx_ = 0;
+            self->mode_dy_ = -2.0f * fabsf(sinf(t * kTwoPi / 0.55f));
+            break;
+        case Mode::kThinking:  // eyes circle slowly, up and to the side
+            self->mode_dx_ = 6.0f * cosf(t * kTwoPi / 1.6f) + 4.0f;
+            self->mode_dy_ = 3.0f * sinf(t * kTwoPi / 1.6f) - 4.0f;
+            break;
+        default:
+            self->mode_dx_ = 0;
+            self->mode_dy_ = 0;
+    }
+    self->Render();
 }
 
 void ChituEyesDisplay::LookAt(float x, float y) {
@@ -631,6 +755,7 @@ void ChituEyesDisplay::ShowMessage(const std::string& text, int seconds) {
         return;
     }
     const int area_h = height_ - kStatusBarHeight;
+    HideOverlays();
     lv_anim_delete(msg_label_, MsgScrollCb);
     lv_label_set_text(msg_label_, text.c_str());
 
@@ -693,5 +818,66 @@ void ChituEyesDisplay::HideMessage() {
     // a happy blink after reading the message
     SetSleeping(false);
     StartFx(Fx::kBounce, 700);
+}
+
+// ---------------------------------------------------------------------------
+// Clock and QR code
+// ---------------------------------------------------------------------------
+void ChituEyesDisplay::HideOverlays() {
+    if (overlay_timer_ != nullptr) {
+        lv_timer_delete(overlay_timer_);
+        overlay_timer_ = nullptr;
+    }
+    if (clock_layer_ != nullptr) lv_obj_add_flag(clock_layer_, LV_OBJ_FLAG_HIDDEN);
+    if (qr_layer_ != nullptr) lv_obj_add_flag(qr_layer_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void ChituEyesDisplay::ShowOverlayFor(lv_obj_t* layer, int seconds) {
+    HideOverlays();
+    lv_obj_remove_flag(layer, LV_OBJ_FLAG_HIDDEN);
+    overlay_timer_ = lv_timer_create(
+        [](lv_timer_t* t) {
+            auto* self = static_cast<ChituEyesDisplay*>(lv_timer_get_user_data(t));
+            self->overlay_timer_ = nullptr;
+            lv_timer_delete(t);
+            self->HideOverlays();
+            self->next_blink_ms_ = lv_tick_get();  // blink when the eyes come back
+        },
+        seconds * 1000, this);
+}
+
+bool ChituEyesDisplay::ShowClock(int seconds, bool hour24) {
+    time_t now = time(nullptr);
+    if (now < 1700000000) {
+        return false;  // clock not set yet
+    }
+    struct tm t;
+    localtime_r(&now, &t);
+    int h = t.tm_hour;
+    if (!hour24) {
+        h = h % 12;
+        if (h == 0) h = 12;
+    }
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d:%02d", h, t.tm_min);
+    DisplayLockGuard lock(this);
+    if (clock_layer_ == nullptr || (msg_layer_ && !lv_obj_has_flag(msg_layer_, LV_OBJ_FLAG_HIDDEN)) ||
+        (qr_layer_ && !lv_obj_has_flag(qr_layer_, LV_OBJ_FLAG_HIDDEN))) {
+        return false;  // a message or QR code is on screen
+    }
+    lv_label_set_text(clock_label_, buf);
+    lv_obj_center(clock_label_);
+    ShowOverlayFor(clock_layer_, seconds);
+    return true;
+}
+
+void ChituEyesDisplay::ShowQrCode(const std::string& text, int seconds) {
+    DisplayLockGuard lock(this);
+    if (qr_ == nullptr) {
+        return;
+    }
+    lv_qrcode_update(qr_, text.data(), text.size());
+    lv_obj_center(qr_);
+    ShowOverlayFor(qr_layer_, seconds);
 }
 

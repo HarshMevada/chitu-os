@@ -37,8 +37,10 @@ const char* const kChatPrompts[] = {
 };
 }  // namespace
 
-void PetMode::Start(MotorController* motors, Display* display, LookFn look, BusyFn busy) {
+void PetMode::Start(MotorController* motors, Display* display, LookFn look, BusyFn busy,
+                    ClockFn clock) {
     motors_ = motors;
+    clock_ = std::move(clock);
     display_ = display;
     look_ = std::move(look);
     busy_ = std::move(busy);
@@ -52,6 +54,7 @@ void PetMode::Start(MotorController* motors, Display* display, LookFn look, Busy
     last_active_us_ = Now();
     next_action_us_ = Now() + 30 * kSec;
     next_chat_us_ = Now() + (int64_t)PET_CHAT_MIN_MINUTES * 60 * kSec;
+    next_clock_us_ = Now() + 20 * kSec;
     xTaskCreate([](void* arg) { static_cast<PetMode*>(arg)->Loop(); }, "chitu_pet", 3584, this, 2,
                 nullptr);
 }
@@ -130,6 +133,13 @@ void PetMode::Loop() {
             // just became idle: give people a moment before acting cute
             next_action_us_ = now + RandSec(15, 30);
             last_state = state;
+        }
+        // Big clock now and then while idle (also when pet mode is off, and while napping)
+        if (CLOCK_EVERY_SECONDS > 0 && clock_ && now >= next_clock_us_) {
+            next_clock_us_ = now + (int64_t)CLOCK_EVERY_SECONDS * kSec;
+            if (now - last_active_us_.load() > 10 * kSec) {
+                clock_();
+            }
         }
         if (!enabled_) {
             continue;

@@ -8,9 +8,11 @@
 
 // Chitu's animated eyes, drawn live on the 128x64 monochrome OLED.
 //
-// The normal xiaozhi OLED status bar stays on top; under it two big rounded eyes
-// blink, glance around, change shape with the AI's emotion and look where Chitu
-// is turning. System messages (Wi-Fi setup, activation code) temporarily hide the eyes.
+// Expressions only: two big rounded eyes fill the screen. They blink, glance around,
+// change shape with the AI's emotion, show listening / thinking / speaking as motion
+// and look where Chitu is turning. Only Wi-Fi setup and the activation code are shown
+// as text. A big clock appears now and then while idle; the phone console address is
+// shown as a QR code.
 class ChituEyesDisplay : public OledDisplay {
 public:
     ChituEyesDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
@@ -20,12 +22,19 @@ public:
     void SetupUI() override;
     bool SetEmotion(const char* emotion) override;
     void SetChatMessage(const char* role, const char* content) override;
+    // Status texts ("Listening..." etc.) become expressions instead of text
+    void SetStatus(const char* status) override;
 
     // Look in a direction, -1..1 on each axis (0,0 = straight ahead).
     void LookAt(float x, float y);
 
     // Show a text message (emoji supported) over the eyes for a few seconds.
     void ShowMessage(const std::string& text, int seconds);
+
+    // Big clock over the eyes for a few seconds (false if the time is not known yet)
+    bool ShowClock(int seconds, bool hour24);
+    // Full-screen QR code (e.g. the phone console address)
+    void ShowQrCode(const std::string& text, int seconds);
 
 private:
     struct EyeParams {
@@ -64,6 +73,22 @@ private:
     lv_obj_t* zzz_ = nullptr;
     bool sleeping_ = false;
     int zzz_step_ = 0;
+
+    // what Chitu is doing (from the status), shown as motion
+    enum class Mode { kIdle, kListening, kThinking, kSpeaking };
+    Mode mode_ = Mode::kIdle;
+    float mode_dx_ = 0.0f;
+    float mode_dy_ = 0.0f;
+    static void ModeAnimCb(void* var, int32_t value);
+
+    // clock / QR overlays
+    lv_obj_t* clock_layer_ = nullptr;
+    lv_obj_t* clock_label_ = nullptr;
+    lv_obj_t* qr_layer_ = nullptr;
+    lv_obj_t* qr_ = nullptr;
+    lv_timer_t* overlay_timer_ = nullptr;
+    void HideOverlays();
+    void ShowOverlayFor(lv_obj_t* layer, int seconds);
 
     Shape base_;  // shape of the current emotion, without glances
     Shape from_;

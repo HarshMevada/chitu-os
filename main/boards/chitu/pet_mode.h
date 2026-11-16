@@ -14,8 +14,9 @@ class PetMode {
 public:
     using LookFn = std::function<void(float x, float y)>;
     using BusyFn = std::function<bool()>;
+    using ClockFn = std::function<bool()>;  // shows the big clock, false if not possible
 
-    void Start(MotorController* motors, Display* display, LookFn look, BusyFn busy);
+    void Start(MotorController* motors, Display* display, LookFn look, BusyFn busy, ClockFn clock);
 
     bool enabled() const { return enabled_.load(); }
     bool chatty() const { return chatty_.load(); }
@@ -32,6 +33,8 @@ private:
     Display* display_ = nullptr;
     LookFn look_;
     BusyFn busy_;
+    ClockFn clock_;
+    int64_t next_clock_us_ = 0;
     std::atomic<bool> enabled_{true};
     std::atomic<bool> chatty_{true};
     std::atomic<int64_t> last_active_us_{0};

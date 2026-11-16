@@ -138,3 +138,9 @@
 #define PET_CHAT_MIN_MINUTES     25          // "chatty": speaks up on its own every 25-45 min
 #define PET_CHAT_MAX_MINUTES     45
 #define PET_MOVES                1           // 1 = small happy wiggles on the spot, 0 = eyes only
+
+// Screen: expressions only. While idle a big clock appears now and then.
+#define CLOCK_EVERY_SECONDS      45          // show the clock every 45 s while idle (0 = never)
+#define CLOCK_SHOW_SECONDS       4           // ... for 4 seconds
+#define CLOCK_24H                0           // 0 = 12-hour (7:05), 1 = 24-hour (19:05)
+#define QR_SHOW_SECONDS          45          // phone console QR code stays this long

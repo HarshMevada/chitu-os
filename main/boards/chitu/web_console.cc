@@ -22,6 +22,7 @@
 #include <freertos/task.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -37,78 +38,135 @@ constexpr uint8_t kWsRoom = 0x21;      // robot -> phone: room sound, 16 kHz
 constexpr int kVideoIntervalMs = 110;  // ~9 fps
 constexpr size_t kRxMax = 8192;
 
-const char kIndexHtml[] = R"HTML(<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+const char kIndexHtml[] = R"HTML(<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#07090c"><meta name="apple-mobile-web-app-capable" content="yes">
 <title>Chitu</title><style>
-:root{--bg:#10161a;--panel:#1b242a;--line:#2b3840;--t:#e8eef2;--m:#8fa3ae;--eye:#7fe3ff;--warn:#ffb347}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{margin:0;background:var(--bg);color:var(--t);font:15px system-ui,-apple-system,Segoe UI,Roboto,sans-serif;user-select:none;-webkit-user-select:none}
-main{max-width:480px;margin:0 auto;padding:10px 12px 24px}
-header{display:flex;align-items:center;justify-content:space-between;margin:2px 0 10px}
-h1{font-size:22px;letter-spacing:3px;margin:0}h1 b{color:var(--eye)}
-.pill{font-size:12px;padding:4px 10px;border-radius:20px;background:var(--panel);border:1px solid var(--line);color:var(--m)}
-.pill.on{color:#10161a;background:var(--eye);border-color:var(--eye)}
-.cam{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:4/3;border:1px solid var(--line)}
+:root{--bg:#07090c;--card:rgba(255,255,255,.045);--line:rgba(255,255,255,.08);--t:#eef3f6;--m:#8794a0;--a:#5ff0ff;--a2:#2bb6ff;--glow:0 0 24px rgba(95,240,255,.35);--red:#ff4d6a;--r:22px}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0}
+html,body{background:var(--bg);color:var(--t);font:15px/1.4 -apple-system,"SF Pro Text",system-ui,Segoe UI,Roboto,sans-serif;-webkit-user-select:none;user-select:none;overscroll-behavior:none}
+body{background:radial-gradient(120% 60% at 50% -10%,#10303a 0,rgba(7,9,12,0) 60%),var(--bg);min-height:100vh}
+.app{max-width:520px;margin:0 auto;padding:max(14px,env(safe-area-inset-top)) 16px calc(96px + env(safe-area-inset-bottom))}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:21px;letter-spacing:.5px}
+.eyes{display:flex;gap:4px;padding:7px 8px;border-radius:12px;background:#0d1418;border:1px solid var(--line);box-shadow:var(--glow)}
+.eyes i{width:11px;height:13px;border-radius:4px;background:var(--a);box-shadow:0 0 8px var(--a);animation:blink 5s infinite}
+@keyframes blink{0%,45%,49%,100%{transform:scaleY(1)}47%{transform:scaleY(.1)}}
+.pill{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--m);padding:7px 12px;border-radius:99px;background:var(--card);border:1px solid var(--line)}
+.dot{width:7px;height:7px;border-radius:50%;background:#55606a}.on .dot{background:#3dffa8;box-shadow:0 0 8px #3dffa8}
+.cam{position:relative;border-radius:var(--r);overflow:hidden;aspect-ratio:4/3;background:#000;border:1px solid var(--line);box-shadow:0 20px 50px rgba(0,0,0,.5)}
 .cam img{width:100%;height:100%;object-fit:cover;display:block}
-.msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--m);font-size:14px;text-align:center;padding:20px}
-.dist{position:absolute;left:8px;bottom:8px;background:#000a;padding:3px 8px;border-radius:8px;font-size:13px}
-.dist.near{color:var(--warn)}
-h2{font-size:13px;color:var(--m);font-weight:600;letter-spacing:1px;text-transform:uppercase;margin:16px 4px 8px}
-.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.btns button,.tog{padding:11px 8px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--t);font-size:14px;font-weight:600}
-.btns button.act,.tog.act{background:var(--eye);color:#10161a;border-color:var(--eye)}
-.talk{width:100%;padding:18px;border-radius:16px;border:1px solid var(--line);background:var(--panel);color:var(--t);font-size:18px;font-weight:700;touch-action:none}
-.talk.held{background:#e0405a;border-color:#e0405a;color:#fff}
-.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:6px auto;max-width:300px}
-.pad button{aspect-ratio:1;border-radius:16px;border:1px solid var(--line);background:var(--panel);color:var(--t);font-size:26px;touch-action:none}
-.pad button.held{background:var(--eye);color:#10161a}
-.pad .stop{background:#5a1d1d;border-color:#8a2c2c;font-size:14px;font-weight:700}
-.pad .blank{visibility:hidden}
-.row{display:flex;align-items:center;gap:10px;margin:10px 4px;color:var(--m);font-size:14px}
-.row input[type=range]{flex:1;accent-color:var(--eye)}.row span{width:36px;text-align:right;color:var(--t)}
-.say{display:flex;gap:8px}.say input{flex:1;min-width:0;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--t);font-size:16px;user-select:text;-webkit-user-select:text}
-.say button{padding:0 16px;border-radius:12px;border:0;background:var(--eye);color:#10161a;font-weight:700;font-size:15px}
-.emo{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0}.emo button{font-size:22px;background:none;border:0;padding:2px 4px}
-.chk{display:flex;align-items:center;gap:8px;color:var(--m);font-size:14px;margin:6px 4px}
-.info{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
-.info div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px;text-align:center;font-size:12px;color:var(--m)}
-.info b{display:block;color:var(--t);font-size:14px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.note{color:var(--warn);font-size:13px;margin:8px 4px;display:none}
-footer{color:var(--m);font-size:11px;text-align:center;margin:16px 0 4px}
-</style></head><body><main>
-<header><h1>CHI<b>TU</b></h1><span id="conn" class="pill">connecting…</span></header>
-<div class="cam"><img id="cam" alt=""><div id="cammsg" class="msg">Connecting to camera…</div><div id="dist" class="dist">— cm</div></div>
-<div class="btns" style="margin-top:8px;grid-template-columns:1fr 1fr 1fr"><button id="cOn" class="act">Camera</button><button id="cFlip">Flip ↕</button><button id="cMirror">Mirror ↔</button></div>
+.cam .msg{position:absolute;inset:0;display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;color:var(--m);font-size:14px}
+.spin{width:26px;height:26px;border-radius:50%;border:2.5px solid rgba(95,240,255,.2);border-top-color:var(--a);animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
+.cam .tools{position:absolute;top:10px;right:10px;display:flex;gap:6px}
+.ib{width:36px;height:36px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(10,14,18,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:#fff;display:grid;place-items:center}
+.ib svg{width:18px;height:18px}.ib.off{opacity:.5}
+.cam .hud{position:absolute;left:0;right:0;bottom:0;padding:26px 12px 10px;display:flex;gap:6px;background:linear-gradient(transparent,rgba(0,0,0,.65))}
+.chip{font-size:12px;padding:5px 10px;border-radius:99px;background:rgba(10,14,18,.6);border:1px solid rgba(255,255,255,.12);backdrop-filter:blur(8px)}
+.chip.warn{color:#ffc35c;border-color:rgba(255,195,92,.45)}
+.panel{display:none;margin-top:16px;animation:fade .25s}.panel.show{display:block}@keyframes fade{from{opacity:0;transform:translateY(6px)}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px}
+.seg button{padding:10px;border:0;border-radius:10px;background:none;color:var(--m);font:600 14px inherit;font-family:inherit}
+.seg button.act{background:linear-gradient(180deg,#1c2a31,#121b20);color:var(--t);box-shadow:inset 0 0 0 1px rgba(95,240,255,.35),0 4px 14px rgba(0,0,0,.4)}
+.joywrap{display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 6px}
+.joy{position:relative;width:min(64vw,230px);aspect-ratio:1;border-radius:50%;touch-action:none;
+ background:radial-gradient(circle at 50% 50%,rgba(95,240,255,.07) 0 30%,transparent 31%),radial-gradient(circle,#121a1f 0 62%,#0c1216 63%);
+ border:1px solid var(--line);box-shadow:inset 0 10px 30px rgba(0,0,0,.6),0 0 0 8px rgba(255,255,255,.02)}
+.joy:before{content:"";position:absolute;inset:14%;border-radius:50%;border:1px dashed rgba(95,240,255,.14)}
+.joy .tick{position:absolute;width:0;height:0;border:6px solid transparent;opacity:.45}
+.tick.n{top:10px;left:calc(50% - 6px);border-bottom-color:var(--a)}.tick.s{bottom:10px;left:calc(50% - 6px);border-top-color:var(--a)}
+.tick.w{left:10px;top:calc(50% - 6px);border-right-color:var(--a)}.tick.e{right:10px;top:calc(50% - 6px);border-left-color:var(--a)}
+.knob{position:absolute;left:50%;top:50%;width:34%;aspect-ratio:1;margin:-17% 0 0 -17%;border-radius:50%;
+ background:radial-gradient(circle at 35% 30%,#bffaff 0,#5ff0ff 22%,#169bc4 70%,#0b5d78 100%);box-shadow:0 10px 25px rgba(0,0,0,.6),0 0 30px rgba(95,240,255,.45);transition:transform .18s cubic-bezier(.2,1.4,.4,1)}
+.joy.active .knob{transition:none;box-shadow:0 10px 25px rgba(0,0,0,.6),0 0 44px rgba(95,240,255,.8)}
+.row{display:flex;align-items:center;gap:12px;color:var(--m);font-size:13.5px}
+.row b{color:var(--t);font-weight:600;min-width:36px;text-align:right}
+input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:6px;border-radius:9px;background:linear-gradient(90deg,var(--a2),var(--a)) 0/var(--p,50%) 100% no-repeat,rgba(255,255,255,.1)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.5),0 0 0 4px rgba(95,240,255,.25)}
+input[type=range]::-moz-range-thumb{width:22px;height:22px;border:0;border-radius:50%;background:#fff}
+.stop{width:100%;padding:13px;border:0;border-radius:14px;background:rgba(255,77,106,.12);color:var(--red);font:700 14px inherit;font-family:inherit;letter-spacing:1.5px;border:1px solid rgba(255,77,106,.35)}
+.micwrap{display:flex;flex-direction:column;align-items:center;gap:12px;padding:10px 0 4px}
+.mic{position:relative;width:118px;height:118px;border-radius:50%;border:0;touch-action:none;color:#04161b;
+ background:radial-gradient(circle at 35% 30%,#d6fdff,#5ff0ff 45%,#1aa6cf);box-shadow:0 14px 34px rgba(0,0,0,.55),0 0 34px rgba(95,240,255,.4)}
+.mic svg{width:42px;height:42px}
+.mic.held{background:radial-gradient(circle at 35% 30%,#ffd6de,#ff5a78 50%,#c3203f);color:#fff}
+.mic.held:before,.mic.held:after{content:"";position:absolute;inset:-10px;border-radius:50%;border:2px solid rgba(255,90,120,.5);animation:ring 1.4s infinite}
+.mic.held:after{animation-delay:.7s}@keyframes ring{from{transform:scale(.9);opacity:1}to{transform:scale(1.35);opacity:0}}
+.cap{color:var(--m);font-size:13px}
+.list{margin-top:14px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line);background:var(--card)}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-top:1px solid var(--line)}
+.sw:first-child{border-top:0}.sw span small{display:block;color:var(--m);font-size:12px;margin-top:2px}
+.sw input{display:none}.sw i{flex:none;width:46px;height:28px;border-radius:99px;background:rgba(255,255,255,.14);position:relative;transition:.2s}
+.sw i:after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.sw input:checked+i{background:linear-gradient(90deg,var(--a2),var(--a))}.sw input:checked+i:after{transform:translateX(18px)}
+.note{display:none;margin-top:12px;padding:12px 14px;border-radius:14px;background:rgba(255,195,92,.08);border:1px solid rgba(255,195,92,.3);color:#ffd28a;font-size:13px}
+.compose{display:flex;gap:8px;align-items:center;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:18px;padding:6px 6px 6px 14px}
+.compose input{flex:1;min-width:0;background:none;border:0;outline:0;color:var(--t);font:16px inherit;font-family:inherit;-webkit-user-select:text;user-select:text}
+.send{width:42px;height:42px;border-radius:14px;border:0;background:linear-gradient(135deg,var(--a),var(--a2));color:#04161b;display:grid;place-items:center}
+.send svg{width:20px;height:20px}
+.emo{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;margin-top:12px}
+.emo button{font-size:24px;padding:6px 0;border:0;border-radius:12px;background:none}.emo button:active{background:rgba(255,255,255,.08)}
+.sent{height:18px;margin-top:8px;color:#3dffa8;font-size:12.5px;text-align:center;opacity:0;transition:.3s}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px}
+.grid div{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:10px;font-size:11.5px;color:var(--m)}
+.grid b{display:block;color:var(--t);font-size:14px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grid .w2{grid-column:span 2}
+nav{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(12px + env(safe-area-inset-bottom));width:min(488px,calc(100% - 24px));
+ display:grid;grid-template-columns:repeat(4,1fr);padding:6px;border-radius:24px;background:rgba(16,22,26,.78);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid var(--line);box-shadow:0 18px 40px rgba(0,0,0,.6);z-index:5}
+nav button{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0;border:0;border-radius:18px;background:none;color:var(--m);font:600 11px inherit;font-family:inherit}
+nav svg{width:22px;height:22px}nav button.act{color:var(--a);background:rgba(95,240,255,.08)}
+@media (min-width:860px){.app{max-width:980px;display:grid;grid-template-columns:1.15fr 1fr;gap:20px;align-items:start}header{grid-column:1/-1}.panel{margin-top:0}.camcol{position:sticky;top:16px}}
+</style></head><body><div class="app">
+<header><div class="logo"><div class="eyes"><i></i><i></i></div>Chitu</div><div class="pill" id="conn"><span class="dot"></span><span id="connt">Connecting</span></div></header>
+<div class="camcol"><div class="cam"><img id="cam" alt="">
+<div class="msg" id="cammsg"><div class="spin"></div><span id="cammsgt">Connecting to camera</span></div>
+<div class="tools">
+<button class="ib" id="cOn" title="Camera"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></button>
+<button class="ib" id="cFlip" title="Flip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M7 8l5-5 5 5M7 16l5 5 5-5"/></svg></button>
+<button class="ib" id="cMirror" title="Mirror"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M8 7l-5 5 5 5M16 7l5 5-5 5"/></svg></button></div>
+<div class="hud"><span class="chip" id="dist">— cm</span><span class="chip" id="stchip">idle</span></div></div></div>
 
-<h2>Voice</h2>
-<button id="talk" class="talk">🎤 Hold to talk to Chitu</button>
-<div class="note" id="micnote"></div>
-<div class="btns" style="margin-top:8px">
-<button id="tPhone" class="tog act">🔊 Chitu on phone</button><button id="tSpk" class="tog act">🤖 Robot speaker</button>
-<button id="tRoom" class="tog">👂 Hear the room</button><button id="tMic" class="tog">🎙️ Phone mic always</button></div>
+<div>
+<section class="panel show" id="p-drive"><div class="card">
+<div class="seg"><button id="mManual" class="act">Manual</button><button id="mAuto">Auto roam</button></div>
+<div class="joywrap"><div class="joy" id="joy"><span class="tick n"></span><span class="tick s"></span><span class="tick w"></span><span class="tick e"></span><div class="knob" id="knob"></div></div></div>
+<div class="row">Max speed<input id="speed" type="range" min="35" max="100" value="75"><b id="speedv">75%</b></div>
+<button class="stop" id="stop" style="margin-top:14px">STOP</button></div></section>
 
-<h2>Drive</h2>
-<div class="btns"><button id="mManual" class="act">Manual</button><button id="mAuto">Auto roam</button></div>
-<div class="pad">
-<button class="blank"></button><button data-d="forward">▲</button><button class="blank"></button>
-<button data-d="left">◀</button><button class="stop" id="stop">STOP</button><button data-d="right">▶</button>
-<button class="blank"></button><button data-d="backward">▼</button><button class="blank"></button></div>
-<div class="row">Speed<input id="speed" type="range" min="30" max="100" value="70"><span id="speedv">70</span></div>
+<section class="panel" id="p-talk"><div class="card"><div class="micwrap">
+<button class="mic" id="talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button>
+<div class="cap" id="talkcap">Hold to talk to Chitu</div></div><div class="note" id="micnote"></div></div>
+<div class="list">
+<label class="sw"><span>Chitu's voice on phone<small>Hear Chitu's replies here</small></span><input type="checkbox" id="tPhone" checked><i></i></label>
+<label class="sw"><span>Robot speaker<small>Also play on Chitu</small></span><input type="checkbox" id="tSpk" checked><i></i></label>
+<label class="sw"><span>Hear the room<small>Listen through Chitu's mic</small></span><input type="checkbox" id="tRoom"><i></i></label>
+<label class="sw"><span>Phone mic always on<small>Say the wake word to your phone</small></span><input type="checkbox" id="tMic"><i></i></label></div></section>
 
-<h2>Message on Chitu's screen</h2>
-<div class="say"><input id="text" maxlength="120" placeholder="Type a message… 😀" enterkeyhint="send"><button id="send">Send</button></div>
-<div class="emo" id="emo"></div>
-<label class="chk"><input type="checkbox" id="sayit"> Chitu also says it out loud</label>
+<section class="panel" id="p-msg"><div class="card">
+<div class="compose"><input id="text" maxlength="120" placeholder="Message for Chitu's screen" enterkeyhint="send"><button class="send" id="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button></div>
+<div class="emo" id="emo"></div><div class="sent" id="sent">Sent to Chitu ✓</div></div>
+<div class="list"><label class="sw"><span>Chitu says it out loud<small>Reads your message and reacts</small></span><input type="checkbox" id="sayit"><i></i></label></div></section>
 
-<h2>Pet</h2>
-<div class="btns"><button id="tPet" class="tog act">🐾 Pet mode</button><button id="tChat" class="tog act">💬 Chatty</button></div>
-<div class="row">Volume<input id="vol" type="range" min="0" max="100" value="80"><span id="volv">80</span></div>
-<div class="info"><div>State<b id="state">—</b></div><div>Wi-Fi<b id="rssi">—</b></div><div>Obstacle<b id="obs">—</b></div>
-<div>Mic<b id="mic">—</b></div><div style="grid-column:span 2">Wake word<b id="wake">—</b></div></div>
-<footer>Chitu web console · same Wi-Fi only</footer>
-</main><script>
+<section class="panel" id="p-pet"><div class="list">
+<label class="sw"><span>Pet mode<small>Looks around, makes faces, naps</small></span><input type="checkbox" id="tPet" checked><i></i></label>
+<label class="sw"><span>Chatty<small>Sometimes speaks up on its own</small></span><input type="checkbox" id="tChat" checked><i></i></label></div>
+<div class="card" style="margin-top:14px"><div class="row">Volume<input id="vol" type="range" min="0" max="100" value="80"><b id="volv">80</b></div></div>
+<div class="grid"><div>State<b id="state">—</b></div><div>Wi-Fi<b id="rssi">—</b></div><div>Path<b id="obs">—</b></div>
+<div>Mic<b id="mic">—</b></div><div class="w2">Wake word<b id="wake">—</b></div></div></section>
+</div></div>
+
+<nav><button class="act" data-p="drive"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/></svg>Drive</button>
+<button data-p="talk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4"/></svg>Talk</button>
+<button data-p="msg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Message</button>
+<button data-p="pet"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="9" r="2.2"/><circle cx="10" cy="5.5" r="2.2"/><circle cx="14" cy="5.5" r="2.2"/><circle cx="18" cy="9" r="2.2"/><path d="M12 11c-3 0-6 4.5-6 7a3 3 0 0 0 3 3c1.2 0 2-.6 3-.6s1.8.6 3 .6a3 3 0 0 0 3-3c0-2.5-3-7-6-7z"/></svg>Chitu</button></nav>
+<script>
 const $=id=>document.getElementById(id);
 const cmd=q=>fetch('/cmd?'+q).catch(()=>{});
+const buzz=ms=>{try{navigator.vibrate&&navigator.vibrate(ms)}catch(e){}};
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('act',x===b));
+ document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('show',p.id==='p-'+b.dataset.p));AC()});
+function fill(r){r.style.setProperty('--p',((r.value-r.min)/(r.max-r.min)*100)+'%')}
 // ---------- audio ----------
 let ac=null,rates={ir:16000,or:24000};
 function AC(){if(!ac){const C=window.AudioContext||window.webkitAudioContext;ac=new C()}if(ac.state==='suspended')ac.resume();return ac}
@@ -120,7 +178,7 @@ function play(view,rate,pl){if(!ac||ac.state!=='running')return;const n=(view.by
  if(pl.next<now+0.03||pl.next>now+0.8)pl.next=now+0.15;s.start(pl.next);pl.next+=b.duration}
 let mic=null,holding=false,micAlways=false,dsAcc=0,dsSum=0,dsCnt=0;
 async function micStart(){const c=AC();if(mic)return true;
- if(!navigator.mediaDevices||!window.isSecureContext){note('Microphone needs the secure page (https). Open https://'+location.hostname+'/');return false}
+ if(!navigator.mediaDevices||!window.isSecureContext){note('The microphone needs the secure page. Open https://'+location.hostname+'/');return false}
  try{const st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
   const src=c.createMediaStreamSource(st),p=c.createScriptProcessor(2048,1,1);
   p.onaudioprocess=e=>{if(!(holding||micAlways)||!ws||ws.readyState!==1)return;const d=e.inputBuffer.getChannelData(0),step=c.sampleRate/16000,out=[];
@@ -128,57 +186,62 @@ async function micStart(){const c=AC();if(mic)return true;
    const buf=new DataView(new ArrayBuffer(1+out.length*2));buf.setUint8(0,1);
    for(let i=0;i<out.length;i++){let v=Math.max(-1,Math.min(1,out[i]*1.4));buf.setInt16(1+i*2,v*32767,true)}ws.send(buf.buffer)};
   src.connect(p);p.connect(c.destination);mic={st,p};note('');return true}
- catch(e){note('Microphone blocked: allow microphone access for this page in the browser settings.');return false}}
+ catch(e){note('Microphone blocked: allow microphone access for this page in your browser settings.');return false}}
 function note(t){$('micnote').textContent=t;$('micnote').style.display=t?'block':'none'}
 const talk=$('talk');
-talk.addEventListener('pointerdown',async e=>{e.preventDefault();talk.setPointerCapture(e.pointerId);if(!await micStart())return;holding=true;talk.classList.add('held');talk.textContent='🔴 Listening… release to send';cmd('a=talk&on=1')});
-['pointerup','pointercancel','lostpointercapture'].forEach(ev=>talk.addEventListener(ev,()=>{if(!holding)return;talk.classList.remove('held');talk.textContent='🎤 Hold to talk to Chitu';setTimeout(()=>{holding=false;cmd('a=talk&on=0')},350)}));
-function tog(id,key,init,cb){const b=$(id);let on=init;b.classList.toggle('act',on);b.onclick=async()=>{AC();on=!on;if(cb&&!(await cb(on))){on=!on;return}b.classList.toggle('act',on);cmd('a='+key+'&on='+(on?1:0))};return{get:()=>on,set:v=>{on=v;b.classList.toggle('act',v)}}}
-const tPhone=tog('tPhone','audio',true),tSpk=tog('tSpk','spk',true),tRoom=tog('tRoom','room',false);
-const tMic=tog('tMic','mic',false,async on=>{if(on&&!await micStart())return false;micAlways=on;return true});
-const tPet=tog('tPet','pet',true),tChat=tog('tChat','chatty',true);
-// ---------- websocket: camera + audio ----------
-let ws=null,camUrl=null;const cam=$('cam');
+talk.addEventListener('pointerdown',async e=>{e.preventDefault();talk.setPointerCapture(e.pointerId);if(!await micStart())return;holding=true;buzz(15);talk.classList.add('held');$('talkcap').textContent='Listening… release to send';cmd('a=talk&on=1')});
+['pointerup','pointercancel','lostpointercapture'].forEach(ev=>talk.addEventListener(ev,()=>{if(!holding)return;talk.classList.remove('held');$('talkcap').textContent='Hold to talk to Chitu';setTimeout(()=>{holding=false;cmd('a=talk&on=0')},350)}));
+function sw(id,key,cb){const el=$(id);el.onchange=async()=>{AC();if(cb&&!(await cb(el.checked))){el.checked=!el.checked;return}cmd('a='+key+'&on='+(el.checked?1:0))};return el}
+const tPhone=sw('tPhone','audio'),tSpk=sw('tSpk','spk'),tRoom=sw('tRoom','room');
+sw('tMic','mic',async on=>{if(on&&!await micStart())return false;micAlways=on;return true});
+const tPet=sw('tPet','pet'),tChat=sw('tChat','chatty');
+// ---------- camera + audio stream ----------
+let ws=null,camUrl=null,camOn=true;const cam=$('cam');
+function camMsg(t,spin){$('cammsg').style.display=t?'flex':'none';$('cammsgt').textContent=t||'';$('cammsg').querySelector('.spin').style.display=spin?'block':'none'}
 function connect(){ws=new WebSocket('wss://'+location.host+'/ws');ws.binaryType='arraybuffer';
- ws.onopen=()=>{$('cammsg').textContent='Camera starting…';cmd('a=audio&on='+(tPhone.get()?1:0));cmd('a=spk&on='+(tSpk.get()?1:0));cmd('a=room&on='+(tRoom.get()?1:0));cmd('a=video&on='+(camOn?1:0))};
+ ws.onopen=()=>{if(camOn)camMsg('Starting camera',1);cmd('a=audio&on='+(tPhone.checked?1:0));cmd('a=spk&on='+(tSpk.checked?1:0));cmd('a=room&on='+(tRoom.checked?1:0));cmd('a=video&on='+(camOn?1:0))};
  ws.onmessage=e=>{if(typeof e.data==='string')return;const v=new DataView(e.data),t=v.getUint8(0);
-  if(t===0x10){const u=URL.createObjectURL(new Blob([new Uint8Array(e.data,1)],{type:'image/jpeg'}));cam.onload=()=>{if(camUrl)URL.revokeObjectURL(camUrl);camUrl=u};cam.src=u;$('cammsg').style.display='none'}
+  if(t===0x10){const u=URL.createObjectURL(new Blob([new Uint8Array(e.data,1)],{type:'image/jpeg'}));cam.onload=()=>{if(camUrl)URL.revokeObjectURL(camUrl);camUrl=u};cam.src=u;camMsg('')}
   else if(t===0x20)play(v,rates.or,players.v);else if(t===0x21)play(v,rates.ir,players.r)};
- ws.onclose=()=>{$('cammsg').style.display='flex';$('cammsg').textContent='Reconnecting…';setTimeout(connect,2000)}}
+ ws.onclose=()=>{camMsg('Reconnecting',1);setTimeout(connect,2000)}}
 connect();setInterval(()=>{if(ws&&ws.readyState===1)ws.send('p')},1000);
-let camOn=true;$('cOn').onclick=()=>{camOn=!camOn;$('cOn').classList.toggle('act',camOn);cmd('a=video&on='+(camOn?1:0));if(!camOn){$('cammsg').style.display='flex';$('cammsg').textContent='Camera off'}};
+$('cOn').onclick=()=>{camOn=!camOn;$('cOn').classList.toggle('off',!camOn);cmd('a=video&on='+(camOn?1:0));if(!camOn)camMsg('Camera paused',0)};
 let camV=0,camH=0;$('cFlip').onclick=()=>{camV^=1;cmd('a=cam&v='+camV)};$('cMirror').onclick=()=>{camH^=1;cmd('a=cam&h='+camH)};
-// ---------- drive ----------
-let held=null,timer=null;
-function send(){if(held)cmd('a=drive&d='+held+'&s='+$('speed').value)}
-function press(b){release();held=b.dataset.d;b.classList.add('held');setMode(false,true);send();timer=setInterval(send,200)}
-function release(){if(!held)return;clearInterval(timer);timer=null;held=null;document.querySelectorAll('.pad .held').forEach(e=>e.classList.remove('held'));cmd('a=stop')}
-document.querySelectorAll('.pad [data-d]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);press(b)});
- ['pointerup','pointercancel','lostpointercapture'].forEach(ev=>b.addEventListener(ev,release))});
-$('stop').onclick=()=>{release();setMode(false);cmd('a=stop')};
+// ---------- joystick ----------
+const joy=$('joy'),knob=$('knob');let jx=0,jy=0,jActive=false,jTimer=null,lastSector=-1;
+function jSend(){cmd('a=joy&x='+Math.round(jx*100)+'&y='+Math.round(jy*100)+'&s='+$('speed').value)}
+function jMove(e){const r=joy.getBoundingClientRect(),R=r.width/2,max=R*0.62;let dx=e.clientX-(r.left+R),dy=e.clientY-(r.top+R);
+ const d=Math.hypot(dx,dy);if(d>max){dx*=max/d;dy*=max/d}knob.style.transform='translate('+dx+'px,'+dy+'px)';jx=dx/max;jy=-dy/max;
+ const mag=Math.hypot(jx,jy),sec=mag<0.25?-1:Math.round((Math.atan2(jy,jx)/(Math.PI/4)+8))%8;if(sec!==lastSector){lastSector=sec;buzz(8);jSend()}}
+joy.addEventListener('pointerdown',e=>{e.preventDefault();joy.setPointerCapture(e.pointerId);jActive=true;joy.classList.add('active');setMode(false,true);jMove(e);jSend();jTimer=setInterval(jSend,150)});
+joy.addEventListener('pointermove',e=>{if(jActive)jMove(e)});
+function jEnd(){if(!jActive)return;jActive=false;joy.classList.remove('active');clearInterval(jTimer);jx=jy=0;lastSector=-1;knob.style.transform='';cmd('a=stop')}
+['pointerup','pointercancel','lostpointercapture'].forEach(ev=>joy.addEventListener(ev,jEnd));
+$('stop').onclick=()=>{jEnd();setMode(false);cmd('a=stop');buzz(30)};
 function setMode(auto,quiet){$('mAuto').classList.toggle('act',auto);$('mManual').classList.toggle('act',!auto);if(!quiet)cmd('a=roam&on='+(auto?1:0))}
 $('mAuto').onclick=()=>setMode(true);$('mManual').onclick=()=>setMode(false);
-$('speed').oninput=e=>$('speedv').textContent=e.target.value;
-$('vol').oninput=e=>$('volv').textContent=e.target.value;$('vol').onchange=e=>cmd('a=volume&v='+e.target.value);
-document.addEventListener('visibilitychange',()=>{if(document.hidden){release();holding=false}});
+const sp=$('speed'),vol=$('vol');[sp,vol].forEach(fill);
+sp.oninput=()=>{$('speedv').textContent=sp.value+'%';fill(sp)};
+vol.oninput=()=>{$('volv').textContent=vol.value;fill(vol)};vol.onchange=()=>cmd('a=volume&v='+vol.value);
+document.addEventListener('visibilitychange',()=>{if(document.hidden){jEnd();holding=false}});
 // ---------- messages ----------
-'😀😂😍🥰😘😎🤔😴😢😡😱🤖👍👋🙏❤🔥🎉⭐🍕🐶🌙'.match(/\p{Extended_Pictographic}/gu).forEach(c=>{const b=document.createElement('button');b.textContent=c;b.onclick=()=>{$('text').value+=c;$('text').focus()};$('emo').appendChild(b)});
+'😀😂😍🥰😘😎🤔😴😢😡😱🤖👍👋🙏❤🔥🎉⭐🍕🐶🌙☕🎂'.match(/\p{Extended_Pictographic}/gu).forEach(c=>{const b=document.createElement('button');b.textContent=c;b.onclick=()=>{$('text').value+=c};$('emo').appendChild(b)});
 function sendMsg(){let t=$('text').value.trim();if(!t)return;t=t.replace(/[️‍]|[\u{1F3FB}-\u{1F3FF}]/gu,'');
- fetch('/msg?say='+($('sayit').checked?1:0),{method:'POST',body:t}).then(r=>{if(r.ok)$('text').value=''})}
+ fetch('/msg?say='+($('sayit').checked?1:0),{method:'POST',body:t}).then(r=>{if(r.ok){$('text').value='';$('sent').style.opacity=1;buzz(12);setTimeout(()=>$('sent').style.opacity=0,1800)}})}
 $('send').onclick=sendMsg;$('text').addEventListener('keydown',e=>{if(e.key==='Enter')sendMsg()});
 // ---------- status ----------
 let fails=0,volSet=false,synced=false;
 async function poll(){try{const r=await fetch('/status',{cache:'no-store'});const s=await r.json();fails=0;
- $('conn').textContent='online';$('conn').className='pill on';rates.ir=s.ir;rates.or=s.or;camV=s.cam_v|0;camH=s.cam_h|0;
+ $('conn').className='pill on';$('connt').textContent=s.rssi+' dBm';rates.ir=s.ir;rates.or=s.or;camV=s.cam_v|0;camH=s.cam_h|0;
  const mm=s.m.distance_mm,d=$('dist');
- if(mm<0){d.textContent='no sensor';d.className='dist'}else{d.textContent=(mm>=2000?'>200':Math.round(mm/10))+' cm';d.className='dist'+(mm<300?' near':'')}
- $('state').textContent=s.m.roaming?'roaming':(s.m.dancing?'dancing':(s.m.moving?'moving':s.st));
+ if(mm<0){d.textContent='no sensor';d.className='chip'}else{d.textContent=(mm>=2000?'> 2 m':(mm>=1000?(mm/1000).toFixed(1)+' m':Math.round(mm/10)+' cm'));d.className='chip'+(mm<300?' warn':'')}
+ const st=s.m.roaming?'roaming':(s.m.dancing?'dancing':(s.m.moving?'moving':s.st));$('state').textContent=st;$('stchip').textContent=s.m.obstacle_stop?'blocked':st;$('stchip').className='chip'+(s.m.obstacle_stop?' warn':'');
  $('obs').textContent=s.m.obstacle_stop?'blocked':'clear';$('rssi').textContent=s.rssi+' dBm';
- $('mic').textContent=s.phone_mic?'phone':(s.mic+(s.mic_clip?' CLIP':''));$('wake').textContent=s.wake;
- if(!held){$('mAuto').classList.toggle('act',s.m.roaming);$('mManual').classList.toggle('act',!s.m.roaming)}
- if(!volSet&&s.volume>=0){$('vol').value=s.volume;$('volv').textContent=s.volume;volSet=true}
- if(!synced){tPet.set(s.pet);tChat.set(s.chatty);synced=true}
-}catch(e){if(++fails>2){$('conn').textContent='offline';$('conn').className='pill'}}
+ $('mic').textContent=s.phone_mic?'phone':(s.mic+(s.mic_clip?' clip':''));$('wake').textContent=s.wake;
+ if(!jActive){$('mAuto').classList.toggle('act',s.m.roaming);$('mManual').classList.toggle('act',!s.m.roaming)}
+ if(!volSet&&s.volume>=0){vol.value=s.volume;$('volv').textContent=s.volume;fill(vol);volSet=true}
+ if(!synced){tPet.checked=s.pet;tChat.checked=s.chatty;synced=true}
+}catch(e){if(++fails>2){$('conn').className='pill';$('connt').textContent='Offline'}}
 setTimeout(poll,800)}
 poll();
 </script></body></html>)HTML";
@@ -336,6 +399,38 @@ esp_err_t WebConsole::HandleCmd(httpd_req_t* req) {
         // Short duration: the page re-sends every 200 ms while a button is held,
         // so the robot stops by itself if the phone disconnects (dead-man switch).
         ok = self->motors_->DriveNamed(dir, speed, 600);
+    } else if (strcmp(action, "joy") == 0) {
+        // Joystick: x/y -100..100, s = max speed. Both wheels share one speed line on
+        // this board, so the stick picks one of 8 moves (forward, curves, spins, back)
+        // and the distance from the centre sets the speed.
+        char xs[8] = {0}, ys[8] = {0}, ss[8] = {0};
+        QueryValue(query, "x", xs, sizeof(xs));
+        QueryValue(query, "y", ys, sizeof(ys));
+        int max_speed = QueryValue(query, "s", ss, sizeof(ss)) ? std::clamp(atoi(ss), 35, 100) : 75;
+        float x = std::clamp(atoi(xs), -100, 100) / 100.0f;
+        float y = std::clamp(atoi(ys), -100, 100) / 100.0f;
+        float mag = std::min(1.0f, sqrtf(x * x + y * y));
+        self->motors_->StopRoam();
+        self->motors_->StopDance();
+        if (mag < 0.25f) {
+            self->motors_->Stop();
+        } else {
+            using D = MotorController::Dir;
+            // sector 0 = right, counter-clockwise in 45 degree steps
+            int sector = (int)lroundf(atan2f(y, x) / (float)(M_PI / 4)) & 7;
+            static const D kMoves[8][2] = {
+                {D::kForward, D::kBackward},   // right: spin right
+                {D::kForward, D::kStop},       // forward-right: curve
+                {D::kForward, D::kForward},    // forward
+                {D::kStop, D::kForward},       // forward-left: curve
+                {D::kBackward, D::kForward},   // left: spin left
+                {D::kStop, D::kBackward},      // back-left
+                {D::kBackward, D::kBackward},  // back
+                {D::kBackward, D::kStop},      // back-right
+            };
+            int speed = 35 + (int)lroundf((max_speed - 35) * (mag - 0.25f) / 0.75f);
+            ok = self->motors_->Drive(kMoves[sector][0], kMoves[sector][1], speed, 600);
+        }
     } else if (strcmp(action, "stop") == 0) {
         self->motors_->Stop();
     } else if (strcmp(action, "roam") == 0) {

@@ -361,14 +361,21 @@ private:
         pet_.RegisterMcpTools();
         McpServer::GetInstance().AddTool(
             "self.chitu.get_web_console",
-            "Get the web address of Chitu's phone control page (live camera, drive buttons, "
-            "auto-roam). The phone must be on the same Wi-Fi. Tell the user the address.",
+            "Show Chitu's phone control page (live camera, joystick, voice, messages) as a QR "
+            "code on Chitu's screen. Use when the user asks for the remote / control page, the "
+            "IP address or the web console. Do NOT read out any address: just tell the user to "
+            "scan the QR code on your screen with their phone camera (same Wi-Fi).",
             PropertyList(), [this](const PropertyList&) -> ReturnValue {
                 std::string url = web_.Url();
                 if (url.empty()) {
                     return std::string("{\"ok\":false,\"error\":\"Not connected to Wi-Fi yet\"}");
                 }
-                return std::string("{\"ok\":true,\"url\":\"") + url + "\"}";
+                if (eyes_ != nullptr) {
+                    eyes_->ShowQrCode(url, QR_SHOW_SECONDS);
+                }
+                return std::string("{\"ok\":true,\"shown\":\"QR code on screen for ") +
+                       std::to_string(QR_SHOW_SECONDS) +
+                       " seconds\",\"tell_user\":\"Scan the QR code on my screen with your phone camera.\"}";
             });
     }
 
@@ -396,10 +403,6 @@ private:
             }
         });
         web_.Start(&motors_, GetAudioCodec(), &pet_);
-        std::string url = web_.Url();
-        if (!url.empty() && display_ != nullptr) {
-            display_->ShowNotification(url, 15000);
-        }
     }
 
     void InitializeButtons() {
@@ -428,7 +431,8 @@ public:
             [this](float x, float y) {
                 if (eyes_ != nullptr) eyes_->LookAt(x, y);
             },
-            [this]() { return web_.RecentlyUsed(); });
+            [this]() { return web_.RecentlyUsed(); },
+            [this]() { return eyes_ != nullptr && eyes_->ShowClock(CLOCK_SHOW_SECONDS, CLOCK_24H); });
         ESP_LOGI(TAG, "Chitu board initialized");
     }
 
