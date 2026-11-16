@@ -10,6 +10,7 @@
   `esp_https_server` added for the phone console
 - Project renamed `chitu` (version 1.0.0); Wi-Fi setup hotspot prefix `Chitu`
 - Removed upstream CI, docker, release scripts, script tests, other-chip sdkconfig defaults
+- `scripts/build.py`: only the OLED display choice is looked up (LCD choice removed)
 
 ## Pulling a fix from upstream later
 ```

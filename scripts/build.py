@@ -524,7 +524,7 @@ def _build_option_definitions(
             ],
         })
 
-    for choice_name in ("DISPLAY_OLED_TYPE", "DISPLAY_LCD_TYPE"):
+    for choice_name in ("DISPLAY_OLED_TYPE",):  # Chitu OS: OLED only
         choice = _kconfig_choice(choice_name)
         if board_config not in choice["board_configs"]:
             continue
