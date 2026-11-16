@@ -13,8 +13,7 @@
                 "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"main/boards/chitu/partitions.csv\"",
                 "CONFIG_LWIP_MAX_SOCKETS=24",
                 "CONFIG_ESP_HTTPS_SERVER_ENABLE=y",
-                "CONFIG_HTTPD_WS_SUPPORT=y",
-                "CONFIG_LV_USE_QRCODE=y"
+                "CONFIG_HTTPD_WS_SUPPORT=y"
             ]
         }
     ]

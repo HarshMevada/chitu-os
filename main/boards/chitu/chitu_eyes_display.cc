@@ -6,8 +6,22 @@
 #include "assets/lang_config.h"
 
 #include <ctime>
+#include <esp_heap_caps.h>
 
 extern "C" const lv_font_t chitu_clock_font;
+
+// QR encoder (Nayuki qrcodegen), already linked into the firmware by the emote
+// graphics component; declared here because its header is private to that component.
+extern "C" {
+bool qrcodegen_encodeText(const char* text, uint8_t temp_buffer[], uint8_t qrcode[], int ecl,
+                          int min_version, int max_version, int mask, bool boost_ecl);
+int qrcodegen_getSize(const uint8_t qrcode[]);
+bool qrcodegen_getModule(const uint8_t qrcode[], int x, int y);
+}
+
+namespace {
+constexpr int kQrPx = 64;
+}
 
 #include <esp_log.h>
 #include <esp_random.h>
@@ -163,14 +177,13 @@ void ChituEyesDisplay::SetupUI() {
     lv_obj_set_size(qr_layer_, width_, height_);
     lv_obj_set_pos(qr_layer_, 0, 0);
     lv_obj_move_foreground(qr_layer_);
-    lv_obj_t* quiet = MakeBox(qr_layer_, Lit());  // lit square = the QR's light background
-    lv_obj_set_size(quiet, height_, height_);
-    lv_obj_center(quiet);
-    qr_ = lv_qrcode_create(quiet);
-    lv_qrcode_set_size(qr_, height_ - 6);
-    lv_qrcode_set_dark_color(qr_, Off());   // dark modules = unlit pixels
-    lv_qrcode_set_light_color(qr_, Lit());  // background = lit pixels
-    lv_obj_center(qr_);
+    qr_buf_ = static_cast<uint8_t*>(
+        heap_caps_malloc(LV_CANVAS_BUF_SIZE(kQrPx, kQrPx, 16, LV_DRAW_BUF_STRIDE_ALIGN), MALLOC_CAP_SPIRAM));
+    if (qr_buf_ != nullptr) {
+        qr_ = lv_canvas_create(qr_layer_);
+        lv_canvas_set_buffer(qr_, qr_buf_, kQrPx, kQrPx, LV_COLOR_FORMAT_RGB565);
+        lv_obj_center(qr_);
+    }
     lv_obj_add_flag(qr_layer_, LV_OBJ_FLAG_HIDDEN);
 
     bool wander = true;
@@ -872,11 +885,31 @@ bool ChituEyesDisplay::ShowClock(int seconds, bool hour24) {
 }
 
 void ChituEyesDisplay::ShowQrCode(const std::string& text, int seconds) {
+    // Version 1-4 QR (fits 64 px at 2 px per module), low error correction
+    uint8_t qr[160], tmp[160];
+    if (!qrcodegen_encodeText(text.c_str(), tmp, qr, 0 /*LOW*/, 1, 4, -1 /*AUTO*/, true)) {
+        ESP_LOGW(TAG, "QR code: text too long");
+        return;
+    }
+    int n = qrcodegen_getSize(qr);
+    int scale = std::max(1, (kQrPx - 4) / n);   // keep a lit quiet zone around it
+    int off = (kQrPx - n * scale) / 2;
     DisplayLockGuard lock(this);
     if (qr_ == nullptr) {
         return;
     }
-    lv_qrcode_update(qr_, text.data(), text.size());
+    // Lit background (the QR's "white"), unlit modules (its "black")
+    lv_canvas_fill_bg(qr_, Lit(), LV_OPA_COVER);
+    for (int y = 0; y < n; y++) {
+        for (int x = 0; x < n; x++) {
+            if (!qrcodegen_getModule(qr, x, y)) continue;
+            for (int dy = 0; dy < scale; dy++) {
+                for (int dx = 0; dx < scale; dx++) {
+                    lv_canvas_set_px(qr_, off + x * scale + dx, off + y * scale + dy, Off(), LV_OPA_COVER);
+                }
+            }
+        }
+    }
     lv_obj_center(qr_);
     ShowOverlayFor(qr_layer_, seconds);
 }

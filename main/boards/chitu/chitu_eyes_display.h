@@ -85,7 +85,8 @@ private:
     lv_obj_t* clock_layer_ = nullptr;
     lv_obj_t* clock_label_ = nullptr;
     lv_obj_t* qr_layer_ = nullptr;
-    lv_obj_t* qr_ = nullptr;
+    lv_obj_t* qr_ = nullptr;  // canvas
+    uint8_t* qr_buf_ = nullptr;
     lv_timer_t* overlay_timer_ = nullptr;
     void HideOverlays();
     void ShowOverlayFor(lv_obj_t* layer, int seconds);
