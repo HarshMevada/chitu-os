@@ -36,9 +36,8 @@
 
 // Audio codec tuned for this robot:
 //  - microphone: multiplies the quiet PDM mic by MIC_GAIN
-//  - speaker: automatic gain - boosts quiet speech up to SPEAKER_BOOST, but lowers the
-//    gain instantly when peaks would exceed SPEAKER_TARGET_PEAK (no distortion), and
-//    starts at DEFAULT_OUTPUT_VOLUME on a fresh install.
+//  - speaker: lifts speech towards SPEAKER_TARGET_RMS (up to SPEAKER_BOOST times) with a
+//    soft limiter on the peaks, and starts at DEFAULT_OUTPUT_VOLUME on a fresh install.
 class ChituAudioCodec : public NoAudioCodecSimplexPdm {
 public:
     ChituAudioCodec(int input_rate, int output_rate, gpio_num_t bclk, gpio_num_t ws,
@@ -118,22 +117,30 @@ protected:
                 return NoAudioCodecSimplexPdm::Write(boosted_.data(), samples);
             }
         }
-        int peak = 1;
+        // Loudness: lift speech towards SPEAKER_TARGET_RMS (up to SPEAKER_BOOST times),
+        // then a soft limiter rounds off peaks instead of clipping them harshly.
+        double sum_sq = 0;
         for (int i = 0; i < samples; i++) {
-            int a = abs((int)data[i]);
-            if (a > peak) peak = a;
+            sum_sq += (double)data[i] * data[i];
         }
-        float wanted = fminf(SPEAKER_BOOST, (float)SPEAKER_TARGET_PEAK / peak);
+        float rms = sqrtf((float)(sum_sq / (samples > 0 ? samples : 1)));
+        float wanted = rms < 200.0f ? gain_ : fminf(SPEAKER_BOOST, SPEAKER_TARGET_RMS / rms);
+        if (wanted < 1.0f) wanted = 1.0f;
         float start = gain_;
-        // fast attack (turn down at once), slow release (turn up gently)
-        float end = (wanted < gain_) ? wanted : gain_ + (wanted - gain_) * 0.08f;
+        // fast attack (turn down quickly), slow release (turn up gently)
+        float end = (wanted < gain_) ? gain_ + (wanted - gain_) * 0.5f : gain_ + (wanted - gain_) * 0.06f;
 
+        constexpr float kKnee = 20000.0f;
+        constexpr float kRoom = 32767.0f - kKnee;
         boosted_.resize(samples);
         for (int i = 0; i < samples; i++) {
             float g = start + (end - start) * i / samples;  // smooth ramp, no clicks
             float x = data[i] * g;
-            if (x > 32767.0f) x = 32767.0f;
-            if (x < -32767.0f) x = -32767.0f;
+            float ax = fabsf(x);
+            if (ax > kKnee) {
+                float over = kKnee + kRoom * tanhf((ax - kKnee) / kRoom);
+                x = x < 0 ? -over : over;
+            }
             boosted_[i] = (int16_t)x;
         }
         gain_ = end;

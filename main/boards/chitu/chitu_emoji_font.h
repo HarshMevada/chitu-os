@@ -4,9 +4,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-// ~200 common emoji, 15 px, 1 bpp (Noto Emoji, SIL Open Font License 1.1).
-// Used as a fallback font so labels can show emoji next to normal text.
-extern const lv_font_t chitu_emoji_font;
+// ~200 common emoji (Noto Emoji, SIL Open Font License 1.1), 1 bpp.
+extern const lv_font_t chitu_emoji_font;      // 20 px, next to message text
+extern const lv_font_t chitu_emoji_big_font;  // 40 px, emoji-only messages and hearts
+// Message text (Inter SemiBold 19 px, ASCII) and the big clock digits
+extern const lv_font_t chitu_text_font;
+extern const lv_font_t chitu_clock_font;
 #ifdef __cplusplus
 }
 #endif

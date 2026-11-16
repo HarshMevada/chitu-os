@@ -30,11 +30,12 @@
 #define AUDIO_INPUT_SAMPLE_RATE  16000
 #define AUDIO_OUTPUT_SAMPLE_RATE 24000
 
-// Speaker loudness. An automatic gain raises quiet speech up to SPEAKER_BOOST times
-// but never pushes peaks past SPEAKER_TARGET_PEAK, so loud parts stay clean.
-// 1.0 = original. Lower SPEAKER_TARGET_PEAK (e.g. 24000) if it still sounds harsh.
-#define SPEAKER_BOOST            3.0f
-#define SPEAKER_TARGET_PEAK      29000
+// Speaker loudness. Speech is lifted towards SPEAKER_TARGET_RMS (up to SPEAKER_BOOST
+// times) and a soft limiter keeps the peaks smooth. Raise SPEAKER_TARGET_RMS for louder,
+// lower it (e.g. 7000) if it sounds harsh. For even more volume, wire the MAX98357
+// GAIN pin to GND through a 100k resistor (+15 dB instead of the default +9 dB).
+#define SPEAKER_BOOST            6.0f
+#define SPEAKER_TARGET_RMS       10000.0f
 // Microphone gain. The Sense board's PDM mic is very quiet; samples are multiplied
 // by this (whole number). Raise to 12-16 if it doesn't wake from across the room,
 // lower to 4-6 if it hears itself or keeps triggering.

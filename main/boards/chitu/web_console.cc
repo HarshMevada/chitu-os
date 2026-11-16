@@ -199,7 +199,7 @@ const tPet=sw('tPet','pet'),tChat=sw('tChat','chatty');
 let ws=null,camUrl=null,camOn=true;const cam=$('cam');
 function camMsg(t,spin){$('cammsg').style.display=t?'flex':'none';$('cammsgt').textContent=t||'';$('cammsg').querySelector('.spin').style.display=spin?'block':'none'}
 function connect(){ws=new WebSocket('wss://'+location.host+'/ws');ws.binaryType='arraybuffer';
- ws.onopen=()=>{if(camOn)camMsg('Starting camera',1);cmd('a=audio&on='+(tPhone.checked?1:0));cmd('a=spk&on='+(tSpk.checked?1:0));cmd('a=room&on='+(tRoom.checked?1:0));cmd('a=video&on='+(camOn?1:0))};
+ ws.onopen=()=>{ws.send('p');if(camOn)camMsg('Starting camera',1);cmd('a=audio&on='+(tPhone.checked?1:0));cmd('a=spk&on='+(tSpk.checked?1:0));cmd('a=room&on='+(tRoom.checked?1:0));cmd('a=video&on='+(camOn?1:0))};
  ws.onmessage=e=>{if(typeof e.data==='string')return;const v=new DataView(e.data),t=v.getUint8(0);
   if(t===0x10){const u=URL.createObjectURL(new Blob([new Uint8Array(e.data,1)],{type:'image/jpeg'}));cam.onload=()=>{if(camUrl)URL.revokeObjectURL(camUrl);camUrl=u};cam.src=u;camMsg('')}
   else if(t===0x20)play(v,rates.or,players.v);else if(t===0x21)play(v,rates.ir,players.r)};
@@ -242,7 +242,7 @@ async function poll(){try{const r=await fetch('/status',{cache:'no-store'});cons
  if(!volSet&&s.volume>=0){vol.value=s.volume;$('volv').textContent=s.volume;fill(vol);volSet=true}
  if(!synced){tPet.checked=s.pet;tChat.checked=s.chatty;synced=true}
 }catch(e){if(++fails>2){$('conn').className='pill';$('connt').textContent='Offline'}}
-setTimeout(poll,800)}
+setTimeout(poll,1500)}
 poll();
 </script></body></html>)HTML";
 
@@ -307,7 +307,7 @@ void WebConsole::Start(MotorController* motors, AudioCodec* codec, PetMode* pet)
     ssl.prvtkey_len = sizeof(kChituKeyPem);
     ssl.port_secure = WEB_CONSOLE_PORT_SECURE;
     ssl.httpd.ctrl_port = 32780;
-    ssl.httpd.max_open_sockets = 5;
+    ssl.httpd.max_open_sockets = 7;
     ssl.httpd.max_uri_handlers = 8;
     ssl.httpd.lru_purge_enable = true;
     ssl.httpd.recv_wait_timeout = 10;
@@ -556,14 +556,18 @@ esp_err_t WebConsole::HandleWs(httpd_req_t* req) {
     auto* self = static_cast<WebConsole*>(req->user_ctx);
     int fd = httpd_req_to_sockfd(req);
     if (req->method == HTTP_GET) {
-        // Handshake done: the newest phone takes over
+        return ESP_OK;  // (IDF 6 does the handshake itself and doesn't call us for it)
+    }
+    // The first frame from a new phone makes it the active one (the newest wins).
+    // The page sends a "p" right after connecting and then every second.
+    if (fd != self->client_fd_.load()) {
         int old = self->client_fd_.exchange(fd);
-        if (old >= 0 && old != fd) {
+        if (old >= 0 && old != fd &&
+            httpd_ws_get_fd_info(self->secure_server_, old) == HTTPD_WS_CLIENT_WEBSOCKET) {
             httpd_sess_trigger_close(self->secure_server_, old);
         }
         self->last_rx_us_ = esp_timer_get_time();
         ESP_LOGI(TAG, "Phone connected (socket %d)", fd);
-        return ESP_OK;
     }
 
     httpd_ws_frame_t frame = {};

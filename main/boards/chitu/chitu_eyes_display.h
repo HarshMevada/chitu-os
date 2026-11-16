@@ -89,6 +89,16 @@ private:
     uint8_t* qr_buf_ = nullptr;
     lv_timer_t* overlay_timer_ = nullptr;
     void HideOverlays();
+
+    // status signs
+    static constexpr int kMeterBars = 5;
+    lv_obj_t* meter_[kMeterBars] = {};
+    float meter_level_ = 0.0f;
+    lv_obj_t* net_icon_ = nullptr;
+    uint32_t last_net_check_ms_ = 0;
+    uint32_t error_until_ms_ = 0;
+    bool wifi_lost_ = false;
+    void UpdateSigns(uint32_t now);
     void ShowOverlayFor(lv_obj_t* layer, int seconds);
 
     Shape base_;  // shape of the current emotion, without glances

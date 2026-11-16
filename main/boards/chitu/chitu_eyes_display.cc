@@ -2,13 +2,18 @@
 
 #include "chitu_eyes_display.h"
 #include "chitu_emoji_font.h"
+#include "audio_diag.h"
+#include "remote_audio.h"
+#include <material_symbols.h>
+#include <wifi_manager.h>
+
+LV_FONT_DECLARE(BUILTIN_ICON_FONT);
 #include "application.h"
 #include "assets/lang_config.h"
 
 #include <ctime>
 #include <esp_heap_caps.h>
 
-extern "C" const lv_font_t chitu_clock_font;
 
 // QR encoder (Nayuki qrcodegen), already linked into the firmware by the emote
 // graphics component; declared here because its header is private to that component.
@@ -121,24 +126,24 @@ void ChituEyesDisplay::SetupUI() {
     // Emoji next to normal text everywhere on screen (AI subtitles and messages):
     // the built-in text font falls back to the small emoji font.
     const lv_font_t* base = lv_obj_get_style_text_font(screen, LV_PART_MAIN);
+    // Messages: bigger, clearer text (Inter 19 px) with 20 px emoji next to it
+    (void)base;
     emoji_font_ = chitu_emoji_font;
-    emoji_font_.fallback = base->fallback;
-    text_font_ = *base;
+    text_font_ = chitu_text_font;
     text_font_.fallback = &emoji_font_;
-    lv_obj_set_style_text_font(screen, &text_font_, 0);
 
     // Hearts (loving) and "z z" (sleeping) drawn with the emoji / text font
     const int area_h = height_ - kStatusBarHeight;
     for (int i = 0; i < 2; i++) {
         heart_[i] = lv_label_create(layer_);
-        lv_obj_set_style_text_font(heart_[i], &emoji_font_, 0);
+        lv_obj_set_style_text_font(heart_[i], &chitu_emoji_big_font, 0);
         lv_obj_set_style_text_color(heart_[i], Lit(), 0);
-        lv_obj_set_size(heart_[i], 16, 16);
+        lv_obj_set_size(heart_[i], 42, 42);
         lv_obj_set_style_text_align(heart_[i], LV_TEXT_ALIGN_CENTER, 0);
-        lv_label_set_text(heart_[i], "\xE2\x9D\xA4");  // U+2764 heart
-        lv_obj_set_pos(heart_[i], kEyeCenterX[i] - 8, area_h / 2 - 8);
-        lv_obj_set_style_transform_pivot_x(heart_[i], 8, 0);
-        lv_obj_set_style_transform_pivot_y(heart_[i], 8, 0);
+        lv_label_set_text(heart_[i], "\xE2\x9D\xA4");  // U+2764 heart, drawn at 40 px
+        lv_obj_set_pos(heart_[i], kEyeCenterX[i] - 21, area_h / 2 - 21);
+        lv_obj_set_style_transform_pivot_x(heart_[i], 21, 0);
+        lv_obj_set_style_transform_pivot_y(heart_[i], 21, 0);
         lv_obj_add_flag(heart_[i], LV_OBJ_FLAG_HIDDEN);
     }
     zzz_ = lv_label_create(layer_);
@@ -185,6 +190,22 @@ void ChituEyesDisplay::SetupUI() {
         lv_obj_center(qr_);
     }
     lv_obj_add_flag(qr_layer_, LV_OBJ_FLAG_HIDDEN);
+
+    // Status signs on top of the eyes: a live mic meter while listening,
+    // and a "no Wi-Fi" / "!" sign when the connection is lost
+    for (int i = 0; i < kMeterBars; i++) {
+        meter_[i] = MakeBox(layer_, Lit());
+        lv_obj_set_style_radius(meter_[i], 1, 0);
+        lv_obj_add_flag(meter_[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    net_icon_ = lv_label_create(screen);
+    lv_obj_set_style_text_font(net_icon_, &BUILTIN_ICON_FONT, 0);
+    lv_obj_set_style_text_color(net_icon_, Lit(), 0);
+    lv_obj_set_style_bg_color(net_icon_, Off(), 0);
+    lv_obj_set_style_bg_opa(net_icon_, LV_OPA_COVER, 0);
+    lv_label_set_text(net_icon_, MATERIAL_SYMBOLS_WIFI_OFF);
+    lv_obj_align(net_icon_, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_add_flag(net_icon_, LV_OBJ_FLAG_HIDDEN);
 
     bool wander = true;
     base_ = ShapeFor("neutral", &wander);
@@ -412,6 +433,7 @@ void ChituEyesDisplay::IdleTimerCb(lv_timer_t* t) {
         return;
     }
     uint32_t now = lv_tick_get();
+    self->UpdateSigns(now);
 
     if (self->sleeping_) {
         // slow "z  zZ  zZz" while asleep, no blinking or glancing
@@ -517,6 +539,9 @@ void ChituEyesDisplay::SetStatus(const char* status) {
         return;
     }
     using namespace Lang::Strings;
+    if (strcmp(status, ERROR) == 0) {
+        error_until_ms_ = lv_tick_get() + 8000;  // "!" sign for a while
+    }
     Mode mode = Mode::kIdle;
     if (strcmp(status, LISTENING) == 0) {
         mode = Mode::kListening;
@@ -674,7 +699,7 @@ void ChituEyesDisplay::ShowHearts(uint32_t duration_ms) {
     lv_anim_init(&a);
     lv_anim_set_var(&a, this);
     lv_anim_set_exec_cb(&a, HeartPulseCb);
-    lv_anim_set_values(&a, 520, 680);  // 2.0x .. 2.65x, beating
+    lv_anim_set_values(&a, 215, 275);  // 0.85x .. 1.07x, beating
     lv_anim_set_duration(&a, 260);
     lv_anim_set_reverse_duration(&a, 260);
     lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
@@ -773,19 +798,16 @@ void ChituEyesDisplay::ShowMessage(const std::string& text, int seconds) {
     lv_label_set_text(msg_label_, text.c_str());
 
     int emoji = EmojiOnlyCount(text);
-    if (emoji > 0 && emoji <= 4) {
-        // just emoji: show them big
+    if (emoji > 0 && emoji <= 3) {
+        // just emoji: drawn big and sharp at 40 px
+        lv_obj_set_style_text_font(msg_label_, &chitu_emoji_big_font, 0);
         lv_obj_set_width(msg_label_, LV_SIZE_CONTENT);
         lv_obj_update_layout(msg_label_);
         int w = lv_obj_get_width(msg_label_);
         int h = lv_obj_get_height(msg_label_);
-        int scale = emoji <= 2 ? 640 : 448;  // 2.5x or 1.75x
-        lv_obj_set_style_transform_pivot_x(msg_label_, w / 2, 0);
-        lv_obj_set_style_transform_pivot_y(msg_label_, h / 2, 0);
-        lv_obj_set_style_transform_scale(msg_label_, scale, 0);
         lv_obj_set_pos(msg_label_, (width_ - w) / 2, (area_h - h) / 2);
     } else {
-        lv_obj_set_style_transform_scale(msg_label_, 256, 0);
+        lv_obj_set_style_text_font(msg_label_, &text_font_, 0);
         lv_obj_set_width(msg_label_, width_ - 4);
         lv_obj_set_pos(msg_label_, 2, 0);
         lv_obj_update_layout(msg_label_);
@@ -912,5 +934,58 @@ void ChituEyesDisplay::ShowQrCode(const std::string& text, int seconds) {
     }
     lv_obj_center(qr_);
     ShowOverlayFor(qr_layer_, seconds);
+}
+
+// ---------------------------------------------------------------------------
+// Status signs: mic meter while listening, lost-connection sign
+// ---------------------------------------------------------------------------
+void ChituEyesDisplay::UpdateSigns(uint32_t now) {
+    // Mic meter: five bars under the eyes that follow the voice level
+    bool listening = mode_ == Mode::kListening && !sleeping_;
+    if (listening) {
+        int level = remote_audio::PhoneMicActive() ? 4000 : audio_diag::mic_rms.load();
+        // quiet room ~600, normal speech 2000-8000 -> 0..1
+        float v = level <= 700 ? 0.0f : std::min(1.0f, logf(level / 700.0f) / logf(12.0f));
+        meter_level_ = std::max(v, meter_level_ * 0.6f);  // fast up, smooth down
+        constexpr int kBarW = 4, kGap = 3, kMaxH = 9;
+        int total = kMeterBars * kBarW + (kMeterBars - 1) * kGap;
+        int x0 = (width_ - total) / 2;
+        static const float kShape[kMeterBars] = {0.45f, 0.75f, 1.0f, 0.75f, 0.45f};
+        for (int i = 0; i < kMeterBars; i++) {
+            float wobble = 0.75f + 0.25f * sinf(now / 90.0f + i * 1.7f);
+            int h = std::max(2, (int)lroundf(kMaxH * meter_level_ * kShape[i] * wobble));
+            lv_obj_set_size(meter_[i], kBarW, h);
+            lv_obj_set_pos(meter_[i], x0 + i * (kBarW + kGap), height_ - 1 - h);
+            lv_obj_remove_flag(meter_[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    } else if (meter_[0] != nullptr && !lv_obj_has_flag(meter_[0], LV_OBJ_FLAG_HIDDEN)) {
+        for (auto* b : meter_) lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
+        meter_level_ = 0;
+    }
+
+    // Lost connection: blinking "no Wi-Fi" sign, or "!" after a server error
+    if (now - last_net_check_ms_ >= 1000) {
+        last_net_check_ms_ = now;
+        auto& wifi = WifiManager::GetInstance();
+        wifi_lost_ = !wifi.IsConfigMode() && !wifi.IsConnected() && now > 8000;
+    }
+    const char* sign = nullptr;
+    if (wifi_lost_) {
+        sign = MATERIAL_SYMBOLS_WIFI_OFF;
+    } else if (now < error_until_ms_) {
+        sign = "!";
+    }
+    bool blink_on = (now / 600) % 2 == 0;
+    if (sign != nullptr && blink_on) {
+        if (strcmp(lv_label_get_text(net_icon_), sign) != 0) {
+            lv_label_set_text(net_icon_, sign);
+            lv_obj_set_style_text_font(net_icon_, sign[0] == '!' ? &chitu_text_font : &BUILTIN_ICON_FONT, 0);
+            lv_obj_align(net_icon_, LV_ALIGN_TOP_RIGHT, 0, 0);
+        }
+        lv_obj_move_foreground(net_icon_);
+        lv_obj_remove_flag(net_icon_, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(net_icon_, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
