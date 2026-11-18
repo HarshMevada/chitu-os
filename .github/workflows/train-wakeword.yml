@@ -1,0 +1,90 @@
+name: Train wake word
+
+# Trains the "Hey Chitu" wake word (microWakeWord) on GitHub's computers and
+# commits the model to main/assets/wakeword/. Runs when tools/wakeword changes.
+on:
+  push:
+    branches: [main]
+    paths: ["tools/wakeword/**", ".github/workflows/train-wakeword.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: train-wakeword
+  cancel-in-progress: true
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      WORK: /mnt/ww
+      PYTHONUNBUFFERED: "1"
+      TF_CPP_MIN_LOG_LEVEL: "2"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Make disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo mkdir -p $WORK && sudo chown $USER $WORK
+          df -h / /mnt
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng libsndfile1 unzip
+          pip install -q --upgrade pip
+          pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          git clone -q --depth 1 https://github.com/rhasspy/piper-sample-generator $WORK/psg
+          pip install -q -e $WORK/psg
+          pip install -q 'git+https://github.com/whatsnowplaying/audio-metadata@d4ebb238e6a401bb1a5aaaac60c9e2b3cb30929f'
+          git clone -q --depth 1 https://github.com/kahrendt/microWakeWord $WORK/mww
+          pip install -q -e $WORK/mww
+          pip install -q 'datasets==3.6.0' soundfile librosa pyyaml
+          pip list | grep -iE "tensorflow|torch|datasets|numpy|piper|micro"
+
+      - name: Download voices
+        run: |
+          mkdir -p $WORK/models $WORK/voices
+          cp $WORK/psg/models/*.json $WORK/models/
+          wget -q -O $WORK/models/en_US-libritts_r-medium.pt \
+            https://github.com/rhasspy/piper-sample-generator/releases/download/v2.0.0/en_US-libritts_r-medium.pt
+          # Hindi voices for an Indian pronunciation (optional)
+          for v in pratham priyamvada rohan; do
+            base="https://huggingface.co/rhasspy/piper-voices/resolve/main/hi/hi_IN/$v/medium/hi_IN-$v-medium"
+            wget -q -O $WORK/voices/hi_IN-$v-medium.onnx "$base.onnx" && \
+            wget -q -O $WORK/voices/hi_IN-$v-medium.onnx.json "$base.onnx.json" || \
+            rm -f $WORK/voices/hi_IN-$v-medium.onnx*
+          done
+          ls -la $WORK/models $WORK/voices
+
+      - name: Train
+        run: |
+          export PYTHONPATH=$WORK/psg:$PYTHONPATH
+          python tools/wakeword/train.py tools/wakeword/config.yaml $WORK $GITHUB_WORKSPACE/main/assets/wakeword
+          df -h /mnt
+
+      - name: Commit the model
+        run: |
+          git config user.name "Chitu wake word trainer"
+          git config user.email "actions@users.noreply.github.com"
+          git add main/assets/wakeword
+          git commit -m "Wake word model: Hey Chitu (trained)" || exit 0
+          git pull --rebase -q origin main
+          git push origin HEAD:main
+
+      - name: Keep the model and test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hey-chitu-model
+          path: |
+            main/assets/wakeword
+            /mnt/ww/trained_models/wakeword/tflite_stream_state_internal_quant/*.txt
+          if-no-files-found: ignore
