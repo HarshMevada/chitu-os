@@ -1,0 +1,22 @@
+{
+  "type": "micro",
+  "wake_word": "Chitu",
+  "author": "Chitu OS (trained with microWakeWord)",
+  "trained_languages": [
+    "en",
+    "hi"
+  ],
+  "version": 2,
+  "micro": {
+    "probability_cutoff": 0.98,
+    "sliding_window_size": 5,
+    "feature_step_size": 10,
+    "tensor_arena_size": 30000,
+    "minimum_esphome_version": "2024.7.0"
+  },
+  "test_results": {
+    "false_rejection_rate": 0.428,
+    "false_accepts_per_hour": 0.375,
+    "steps": 12000
+  }
+}
