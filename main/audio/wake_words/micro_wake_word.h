@@ -21,12 +21,6 @@
 #include <frontend.h>
 #include <frontend_util.h>
 
-namespace tflite {
-class MicroInterpreter;
-class MicroAllocator;
-class MicroResourceVariables;
-}  // namespace tflite
-
 class MicroWakeWord {
 public:
     MicroWakeWord();
@@ -61,9 +55,8 @@ private:
     uint8_t* tensor_arena_ = nullptr;
     size_t tensor_arena_size_ = 0;
     uint8_t* var_arena_ = nullptr;
-    tflite::MicroAllocator* var_allocator_ = nullptr;
-    tflite::MicroResourceVariables* resource_vars_ = nullptr;
-    tflite::MicroInterpreter* interpreter_ = nullptr;
+    // TFLite Micro objects (kept opaque so this header needs no TFLite includes)
+    void* interpreter_ = nullptr;
     void* op_resolver_ = nullptr;
 
     int stride_ = 3;

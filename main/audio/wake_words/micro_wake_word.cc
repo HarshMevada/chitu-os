@@ -21,6 +21,8 @@ extern const uint8_t micro_wake_word_model_start[] asm("_binary_micro_wake_word_
 
 namespace {
 using OpResolver = tflite::MicroMutableOpResolver<20>;
+using Interpreter = tflite::MicroInterpreter;
+Interpreter* Interp(void* p) { return static_cast<Interpreter*>(p); }
 constexpr size_t kVarArenaSize = 1024;
 constexpr size_t kMaxTensorArena = 96 * 1024;
 
@@ -51,7 +53,7 @@ MicroWakeWord::MicroWakeWord() {
 }
 
 MicroWakeWord::~MicroWakeWord() {
-    delete interpreter_;
+    delete Interp(interpreter_);
     delete static_cast<OpResolver*>(op_resolver_);
     if (tensor_arena_ != nullptr) heap_caps_free(tensor_arena_);
     if (var_arena_ != nullptr) heap_caps_free(var_arena_);
@@ -112,16 +114,15 @@ bool MicroWakeWord::LoadModel() {
         if (tensor_arena_ == nullptr) {
             break;
         }
-        var_allocator_ = tflite::MicroAllocator::Create(var_arena_, kVarArenaSize);
-        resource_vars_ = tflite::MicroResourceVariables::Create(var_allocator_, 20);
-        interpreter_ = new (std::nothrow)
-            tflite::MicroInterpreter(model, *resolver, tensor_arena_, size, resource_vars_);
-        if (interpreter_ != nullptr && interpreter_->AllocateTensors() == kTfLiteOk) {
+        auto* var_allocator = tflite::MicroAllocator::Create(var_arena_, kVarArenaSize);
+        auto* resource_vars = tflite::MicroResourceVariables::Create(var_allocator, 20);
+        auto* interp = new (std::nothrow) Interpreter(model, *resolver, tensor_arena_, size, resource_vars);
+        if (interp != nullptr && interp->AllocateTensors() == kTfLiteOk) {
+            interpreter_ = interp;
             tensor_arena_size_ = size;
             break;
         }
-        delete interpreter_;
-        interpreter_ = nullptr;
+        delete interp;
         heap_caps_free(tensor_arena_);
         tensor_arena_ = nullptr;
     }
@@ -130,8 +131,8 @@ bool MicroWakeWord::LoadModel() {
         return false;
     }
 
-    TfLiteTensor* input = interpreter_->input(0);
-    TfLiteTensor* output = interpreter_->output(0);
+    TfLiteTensor* input = Interp(interpreter_)->input(0);
+    TfLiteTensor* output = Interp(interpreter_)->output(0);
     if (input->dims->size != 3 || input->dims->data[0] != 1 || input->dims->data[2] != kFeatures ||
         input->type != kTfLiteInt8 || output->type != kTfLiteUInt8) {
         ESP_LOGE(TAG, "Unexpected model input/output format");
@@ -184,17 +185,18 @@ void MicroWakeWord::FeedMono(const int16_t* data, size_t samples) {
 }
 
 void MicroWakeWord::ProcessFeatures(const int8_t features[kFeatures]) {
-    TfLiteTensor* input = interpreter_->input(0);
+    Interpreter* interp = Interp(interpreter_);
+    TfLiteTensor* input = interp->input(0);
     memcpy(tflite::GetTensorData<int8_t>(input) + kFeatures * stride_step_, features, kFeatures);
     if (++stride_step_ < stride_) {
         return;
     }
     stride_step_ = 0;
-    if (interpreter_->Invoke() != kTfLiteOk) {
+    if (interp->Invoke() != kTfLiteOk) {
         ESP_LOGW(TAG, "Inference failed");
         return;
     }
-    uint8_t p = interpreter_->output(0)->data.uint8[0];
+    uint8_t p = interp->output(0)->data.uint8[0];
     last_probability_ = p;
     prob_index_ = (prob_index_ + 1) % kSlidingWindow;
     probabilities_[prob_index_] = p;
