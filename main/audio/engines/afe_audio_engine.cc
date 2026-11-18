@@ -12,6 +12,7 @@
 
 #include "audio_service.h"
 #include "wake_words/custom_wake_word.h"
+#include "wake_words/micro_wake_word.h"
 
 #define TAG "AfeAudioEngine"
 
@@ -25,6 +26,9 @@ AfeAudioEngine::AfeAudioEngine() { event_group_ = xEventGroupCreate(); }
 
 AfeAudioEngine::~AfeAudioEngine() {
     custom_wake_word_.reset();
+#if CONFIG_USE_MICRO_WAKE_WORD
+    micro_wake_word_.reset();
+#endif
     if (afe_data_ != nullptr) {
         afe_iface_->destroy(afe_data_);
     }
@@ -80,6 +84,26 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
         }
     }
 
+#if CONFIG_USE_MICRO_WAKE_WORD
+    if (true) {
+        // Chitu OS: trained microWakeWord model, fed with the AFE output like MultiNet
+        wake_detector_ = WakeDetector::kMicroWakeWord;
+        micro_wake_word_ = std::make_unique<MicroWakeWord>();
+        micro_wake_word_->OnWakeWordDetected([this](const std::string& wake_word) {
+            last_detected_wake_word_ = wake_word;
+            xEventGroupClearBits(event_group_, kWakeWordEnabled);
+            UpdateActiveState();
+            if (wake_word_detected_callback_) {
+                wake_word_detected_callback_(wake_word);
+            }
+        });
+        if (!micro_wake_word_->Initialize()) {
+            ESP_LOGE(TAG, "Failed to initialize microWakeWord detector");
+            micro_wake_word_.reset();
+            wake_detector_ = WakeDetector::kNone;
+        }
+    } else
+#endif
     if (multinet_model_name != nullptr) {
         wake_detector_ = WakeDetector::kMultiNet;
         custom_wake_word_ = std::make_unique<CustomWakeWord>();
@@ -245,7 +269,9 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
 
     const char* detector = wake_detector_ == WakeDetector::kWakeNet
                                ? "WakeNet"
-                               : (wake_detector_ == WakeDetector::kMultiNet ? "MultiNet" : "none");
+                               : (wake_detector_ == WakeDetector::kMultiNet ? "MultiNet"
+                                  : (wake_detector_ == WakeDetector::kMicroWakeWord ? "microWakeWord"
+                                                                                    : "none"));
     ESP_LOGI(TAG, "Initialized FD AFE, detector: %s, NS: off, feed: %d, fetch: %d", detector,
              afe_iface_->get_feed_chunksize(afe_data_), afe_iface_->get_fetch_chunksize(afe_data_));
     ESP_LOGI(TAG, "After AFE create: free=%u min=%u largest=%u",
@@ -287,12 +313,22 @@ void AfeAudioEngine::EnableWakeWordDetection(bool enable) {
         if (wake_detector_ == WakeDetector::kMultiNet) {
             custom_wake_word_->Start();
         }
+#if CONFIG_USE_MICRO_WAKE_WORD
+        if (wake_detector_ == WakeDetector::kMicroWakeWord) {
+            micro_wake_word_->Start();
+        }
+#endif
         xEventGroupSetBits(event_group_, kWakeWordEnabled);
     } else {
         xEventGroupClearBits(event_group_, kWakeWordEnabled);
         if (wake_detector_ == WakeDetector::kMultiNet) {
             custom_wake_word_->Stop();
         }
+#if CONFIG_USE_MICRO_WAKE_WORD
+        if (wake_detector_ == WakeDetector::kMicroWakeWord) {
+            micro_wake_word_->Stop();
+        }
+#endif
     }
     UpdateActiveState();
 }
@@ -318,6 +354,11 @@ void AfeAudioEngine::EnableDeviceAec(bool enable) {
 bool AfeAudioEngine::HasWakeWord() const { return wake_detector_ != WakeDetector::kNone; }
 
 std::vector<std::string> AfeAudioEngine::GetWakeWords() const {
+#if CONFIG_USE_MICRO_WAKE_WORD
+    if (micro_wake_word_) {
+        return micro_wake_word_->GetWakeWords();
+    }
+#endif
     return custom_wake_word_ ? custom_wake_word_->GetWakeWords() : wake_words_;
 }
 
@@ -456,6 +497,12 @@ void AfeAudioEngine::HandleWakeWordResult(const afe_fetch_result_t* result) {
         custom_wake_word_->FeedMono(result->data, result->data_size / sizeof(int16_t));
         return;
     }
+#if CONFIG_USE_MICRO_WAKE_WORD
+    if (wake_detector_ == WakeDetector::kMicroWakeWord) {
+        micro_wake_word_->FeedMono(result->data, result->data_size / sizeof(int16_t));
+        return;
+    }
+#endif
 
 #if CONFIG_SEND_WAKE_WORD_DATA
     wake_word_audio_cache_.Store(result->data, result->data_size / sizeof(int16_t));

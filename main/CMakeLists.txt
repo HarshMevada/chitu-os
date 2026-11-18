@@ -142,6 +142,8 @@ if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4 OR CONFIG_IDF_TARGET_E
     list(APPEND SOURCES "audio/engines/afe_audio_engine.cc")
     list(APPEND SOURCES "audio/wake_words/custom_wake_word.cc")
     list(APPEND SOURCES "audio/wake_words/wake_word_audio_cache.cc")
+    # Chitu OS: microWakeWord detector (trained model built into the firmware)
+    list(APPEND SOURCES "audio/wake_words/micro_wake_word.cc")
 else()
     list(APPEND SOURCES "audio/engines/lite_audio_engine.cc")
     list(APPEND SOURCES "audio/wake_words/esp_wake_word.cc")
@@ -310,8 +312,18 @@ if(IDF_TARGET STREQUAL "esp32s3")
 endif()
 # Chitu: https phone console (microphone access needs a secure page)
 list(APPEND MAIN_PRIV_REQUIRES_EXTRA esp_https_server esp_http_server)
+# Chitu OS: the microWakeWord model, embedded under a fixed symbol name
+set(MICRO_WAKE_WORD_FILES "")
+if(CONFIG_USE_MICRO_WAKE_WORD)
+    set(MWW_SRC "${CMAKE_CURRENT_SOURCE_DIR}/assets/wakeword/${CONFIG_MICRO_WAKE_WORD_MODEL}.tflite")
+    if(NOT EXISTS "${MWW_SRC}")
+        message(FATAL_ERROR "Wake word model not found: ${MWW_SRC}")
+    endif()
+    configure_file("${MWW_SRC}" "${CMAKE_CURRENT_BINARY_DIR}/micro_wake_word.tflite" COPYONLY)
+    list(APPEND MICRO_WAKE_WORD_FILES "${CMAKE_CURRENT_BINARY_DIR}/micro_wake_word.tflite")
+endif()
 idf_component_register(SRCS ${SOURCES}
-                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
+                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS} ${MICRO_WAKE_WORD_FILES}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES

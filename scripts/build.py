@@ -341,6 +341,7 @@ def _wake_word_sdkconfig_options(
             "CONFIG_USE_ESP_WAKE_WORD=n",
             "CONFIG_USE_AFE_WAKE_WORD=n",
             "CONFIG_USE_CUSTOM_WAKE_WORD=y",
+            "CONFIG_USE_MICRO_WAKE_WORD=n",
             f'CONFIG_CUSTOM_WAKE_WORD="{phrase}"',
             f'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="{phrase.title()}"',
             "CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=20",
@@ -348,6 +349,32 @@ def _wake_word_sdkconfig_options(
             "CONFIG_SR_MN_EN_MULTINET7_QUANT=y",
         ]
         return "custom", options, ["CONFIG_USE_CUSTOM_WAKE_WORD"]
+
+    # Chitu OS: a trained microWakeWord model in main/assets/wakeword/<name>.tflite
+    # (e.g. "micro:chitu"); its .json manifest gives the display name and cutoff.
+    if wake_word.strip().lower().startswith("micro:"):
+        name = wake_word.split(":", 1)[1].strip()
+        if not re.fullmatch(r"[A-Za-z0-9_]+", name):
+            raise ValueError("microWakeWord needs a model name, e.g. micro:chitu")
+        model_dir = Path(__file__).resolve().parent.parent / "main" / "assets" / "wakeword"
+        if not (model_dir / f"{name}.tflite").exists():
+            raise ValueError(f"Wake word model main/assets/wakeword/{name}.tflite not found")
+        manifest = {}
+        if (model_dir / f"{name}.json").exists():
+            manifest = json.loads((model_dir / f"{name}.json").read_text(encoding="utf-8"))
+        display = str(manifest.get("wake_word", name.replace("_", " ").title())).replace('"', "")
+        cutoff = float(manifest.get("micro", {}).get("probability_cutoff", 0.9))
+        options = [
+            "CONFIG_WAKE_WORD_DISABLED=n",
+            "CONFIG_USE_ESP_WAKE_WORD=n",
+            "CONFIG_USE_AFE_WAKE_WORD=n",
+            "CONFIG_USE_CUSTOM_WAKE_WORD=n",
+            "CONFIG_USE_MICRO_WAKE_WORD=y",
+            f'CONFIG_MICRO_WAKE_WORD_MODEL="{name}"',
+            f'CONFIG_MICRO_WAKE_WORD_DISPLAY="{display}"',
+            f"CONFIG_MICRO_WAKE_WORD_CUTOFF={min(99, max(1, round(cutoff * 100)))}",
+        ]
+        return "micro", options, ["CONFIG_USE_MICRO_WAKE_WORD"]
 
     normalized = wake_word.strip().casefold().replace("-", "_")
     if normalized == "nihaoxiaozhi":
@@ -366,6 +393,7 @@ def _wake_word_sdkconfig_options(
         "CONFIG_USE_ESP_WAKE_WORD=n",
         "CONFIG_USE_AFE_WAKE_WORD=n",
         "CONFIG_USE_CUSTOM_WAKE_WORD=n",
+        "CONFIG_USE_MICRO_WAKE_WORD=n",
     ]
 
     if normalized == "disabled":

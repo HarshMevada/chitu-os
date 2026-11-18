@@ -21,3 +21,12 @@ git fetch upstream
 git diff 1b7644a <new-commit> -- main/application.cc main/audio main/protocols > fix.patch
 git apply --3way fix.patch   # skip parts touching removed boards
 ```
+
+## microWakeWord engine (trained "Chitu" wake word)
+- `main/audio/wake_words/micro_wake_word.{h,cc}` (new): microWakeWord detector (TFLite Micro).
+- `main/audio/engines/afe_audio_engine.{h,cc}`: a third detector kind fed from the AFE output
+  like MultiNet; AFE task stack 4 KB -> 8 KB.
+- `main/Kconfig.projbuild`: `USE_MICRO_WAKE_WORD`, `MICRO_WAKE_WORD_MODEL/DISPLAY/CUTOFF`.
+- `main/CMakeLists.txt`: builds the detector and embeds `assets/wakeword/<model>.tflite`.
+- `main/idf_component.yml`: esp-tflite-micro + esp-micro-speech-features (only for those builds).
+- `scripts/build.py`: `--wake-word micro:<model>`.

@@ -19,6 +19,7 @@
 #include "wake_words/wake_word_audio_cache.h"
 
 class CustomWakeWord;
+class MicroWakeWord;
 
 class AfeAudioEngine : public AudioEngine {
 public:
@@ -52,12 +53,13 @@ private:
         kNone,
         kWakeNet,
         kMultiNet,
+        kMicroWakeWord,  // Chitu OS: trained microWakeWord model
     };
 
     static constexpr EventBits_t kWakeWordEnabled = 1 << 0;
     static constexpr EventBits_t kVoiceProcessingEnabled = 1 << 1;
     static constexpr EventBits_t kAfeActive = 1 << 2;
-    static constexpr size_t kProcessingTaskStackSize = 4096;
+    static constexpr size_t kProcessingTaskStackSize = 4096 * 2;  // Chitu OS: room for TFLite
 
     AudioCodec* codec_ = nullptr;
     srmodel_list_t* models_ = nullptr;
@@ -83,6 +85,7 @@ private:
     WakeDetector wake_detector_ = WakeDetector::kNone;
 
     std::unique_ptr<CustomWakeWord> custom_wake_word_;
+    std::unique_ptr<MicroWakeWord> micro_wake_word_;
     std::vector<std::string> wake_words_;
     std::string last_detected_wake_word_;
     std::vector<int16_t> input_buffer_;

@@ -48,6 +48,9 @@ jobs:
           # Custom phrases (MultiNet, no training). Retried now that the mic DC offset is fixed.
           - { key: custom_hey_chitu,   model: "custom:hey chitu",   label: "Hey Chitu" }
           - { key: custom_hello_chitu, model: "custom:hello chitu", label: "Hello Chitu" }
+          # Trained wake words (microWakeWord). "Chitu" appears once its model is trained.
+          - { key: micro_chitu,     model: "micro:chitu",     label: "Chitu (trained)" }
+          - { key: micro_okay_nabu, model: "micro:okay_nabu", label: "Okay Nabu (engine test)" }
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v7
