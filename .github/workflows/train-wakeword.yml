@@ -47,6 +47,8 @@ jobs:
           git clone -q --depth 1 https://github.com/kahrendt/microWakeWord $WORK/mww
           pip install -q -e $WORK/mww
           pip install -q 'datasets==3.6.0' soundfile librosa pyyaml
+          # piper-sample-generator pins an old audiomentations; microWakeWord needs a newer one
+          pip install -q -U 'audiomentations>=0.37'
           pip list | grep -iE "tensorflow|torch|datasets|numpy|piper|micro"
 
       - name: Download voices
