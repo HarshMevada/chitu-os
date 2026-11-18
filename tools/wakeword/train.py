@@ -102,23 +102,37 @@ def to_16k_wavs(src_glob, out_dir):
             print("skip", e)
 
 
-if not os.path.isdir("audioset_16k"):
-    os.makedirs("audioset", exist_ok=True)
-    run(["wget", "-q", "-O", "audioset/bal_train09.tar",
-         "https://huggingface.co/datasets/agkphysics/AudioSet/resolve/main/data/bal_train09.tar"])
-    run(["tar", "-xf", "audioset/bal_train09.tar", "-C", "audioset"])
-    to_16k_wavs("audioset/audio/**/*.flac", "audioset_16k_tmp")
-    shutil.rmtree("audioset")
-    os.rename("audioset_16k_tmp", "audioset_16k")
+# Background sounds are optional: a source that cannot be downloaded is skipped
+try:
+    if not os.path.isdir("audioset_16k"):
+        os.makedirs("audioset", exist_ok=True)
+        run(["wget", "-q", "-O", "audioset/bal_train09.tar",
+             "https://huggingface.co/datasets/agkphysics/AudioSet/resolve/main/data/bal_train09.tar"])
+        run(["tar", "-xf", "audioset/bal_train09.tar", "-C", "audioset"])
+        to_16k_wavs("audioset/audio/**/*.flac", "audioset_16k_tmp")
+        shutil.rmtree("audioset")
+        os.rename("audioset_16k_tmp", "audioset_16k")
+except Exception as e:
+    print("AudioSet skipped:", e)
+    shutil.rmtree("audioset", ignore_errors=True)
 
-if not os.path.isdir("fma_16k"):
-    os.makedirs("fma", exist_ok=True)
-    run(["wget", "-q", "-O", "fma/fma_xs.zip",
-         "https://huggingface.co/datasets/mchl914/fma_xsmall/resolve/main/fma_xs.zip"])
-    run(["unzip", "-q", "fma/fma_xs.zip", "-d", "fma"])
-    to_16k_wavs("fma/fma_small/**/*.mp3", "fma_16k_tmp")
-    shutil.rmtree("fma")
-    os.rename("fma_16k_tmp", "fma_16k")
+try:
+    if not os.path.isdir("fma_16k"):
+        os.makedirs("fma", exist_ok=True)
+        run(["wget", "-q", "-O", "fma/fma_xs.zip",
+             "https://huggingface.co/datasets/mchl914/fma_xsmall/resolve/main/fma_xs.zip"])
+        run(["unzip", "-q", "fma/fma_xs.zip", "-d", "fma"])
+        to_16k_wavs("fma/fma_small/**/*.mp3", "fma_16k_tmp")
+        shutil.rmtree("fma")
+        os.rename("fma_16k_tmp", "fma_16k")
+except Exception as e:
+    print("Music skipped:", e)
+    shutil.rmtree("fma", ignore_errors=True)
+
+background = [d for d in ["fma_16k", "audioset_16k"] if glob.glob(f"{d}/*.wav")]
+print("background sources:", background)
+if not background:
+    raise SystemExit("No background sound source could be downloaded")
 
 # ---------------------------------------------------------------- 3. features
 from mmap_ninja.ragged import RaggedMmap  # noqa: E402
@@ -139,7 +153,7 @@ augmenter = Augmentation(
         "RIR": 0.5,
     },
     impulse_paths=["mit_rirs"],
-    background_paths=["fma_16k", "audioset_16k"],
+    background_paths=background,
     background_min_snr_db=-5,
     background_max_snr_db=10,
     min_jitter_s=0.195,
