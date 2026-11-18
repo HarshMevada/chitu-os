@@ -16,6 +16,13 @@
 #include "pet_mode.h"
 #include "web_console.h"
 #include "chitu_eyes_display.h"
+#include "audio_fx.h"
+#include "chat_bridge.h"
+#include "net_manager.h"
+#include "settings.h"
+#include "time_location.h"
+
+#include <atomic>
 
 #include <ssid_manager.h>
 
@@ -68,6 +75,9 @@ public:
         }
         win_samples_ += n;
         RouteRemoteMic(dest, n);
+        if (!remote_audio::PhoneMicActive()) {
+            audio_fx::sense.Feed(dest, n);  // loud sounds / music for the personality
+        }
         if (win_samples_ >= input_sample_rate_) {  // publish about once per second
             audio_diag::mic_rms = (int)sqrt((double)win_sum_sq_ / win_samples_);
             audio_diag::mic_peak = win_peak_;
@@ -88,6 +98,12 @@ protected:
     void RouteRemoteMic(int16_t* dest, int n) {
         if (remote_audio::PhoneMicActive()) {
             size_t want = (size_t)n * sizeof(int16_t);
+            // Push-to-talk is opening the line: keep the phone audio until Chitu listens
+            if (WebConsole::HoldPhoneAudio() &&
+                Application::GetInstance().GetDeviceState() != kDeviceStateListening) {
+                memset(dest, 0, want);
+                return;
+            }
             // small jitter cushion: after running dry, wait for ~120 ms of audio
             if (phone_starved_ && remote_audio::phone_mic.Available() < 1920 * sizeof(int16_t)) {
                 memset(dest, 0, want);
@@ -108,7 +124,33 @@ protected:
         }
     }
 
-    int Write(const int16_t* data, int samples) override {
+public:
+    // Voice profile (0 natural .. 4 robot), saved
+    void SetVoiceProfile(int p) {
+        voice_profile_ = p;
+        fx_pending_ = true;
+        Settings settings("chitu", true);
+        settings.SetInt("voice_fx", p);
+    }
+    int voice_profile() const { return voice_profile_.load(); }
+    void LoadVoiceProfile() {
+        Settings settings("chitu");
+        voice_profile_ = settings.GetInt("voice_fx", VOICE_PROFILE);
+        fx_pending_ = true;
+    }
+
+protected:
+    int Write(const int16_t* in, int samples) override {
+        // Voice effect first (it changes what the phone hears too)
+        if (fx_pending_.exchange(false)) {
+            fx_.SetProfile(voice_profile_, output_sample_rate_);
+        }
+        const int16_t* data = in;
+        if (fx_.profile() != audio_fx::kNatural) {
+            fx_buf_.assign(in, in + samples);
+            fx_.Process(fx_buf_.data(), samples);
+            data = fx_buf_.data();
+        }
         if (remote_audio::phone_listen) {
             remote_audio::voice_out.Push(data, (size_t)samples * sizeof(int16_t));
             if (!remote_audio::robot_speaker) {
@@ -124,6 +166,9 @@ protected:
             sum_sq += (double)data[i] * data[i];
         }
         float rms = sqrtf((float)(sum_sq / (samples > 0 ? samples : 1)));
+        if (rms > 200.0f) {
+            audio_fx::last_play_us = esp_timer_get_time();  // so Chitu ignores its own voice
+        }
         float wanted = rms < 200.0f ? gain_ : fminf(SPEAKER_BOOST, SPEAKER_TARGET_RMS / rms);
         if (wanted < 1.0f) wanted = 1.0f;
         float start = gain_;
@@ -149,6 +194,10 @@ protected:
 
 private:
     std::vector<int16_t> boosted_;
+    std::vector<int16_t> fx_buf_;
+    audio_fx::VoiceFx fx_;
+    std::atomic<int> voice_profile_{0};
+    std::atomic<bool> fx_pending_{true};
     float gain_ = 1.0f;
     int64_t win_sum_sq_ = 0;
     int win_samples_ = 0;
@@ -167,7 +216,7 @@ private:
     esp_lcd_panel_handle_t panel_ = nullptr;
     Display* display_ = nullptr;
     ChituEyesDisplay* eyes_ = nullptr;
-    Camera* camera_ = nullptr;
+    ChituCamera* camera_ = nullptr;
     MotorController motors_;
     ObstacleSensor obstacle_;
     WebConsole web_;
@@ -228,8 +277,11 @@ private:
                 esp_timer_stop(wifi_retry_timer_);
             }
             if (event == NetworkEvent::Connected) {
+                NetManager::GetInstance().OnConnected();
                 StartWebConsole();
             }
+        } else if (event == NetworkEvent::Disconnected) {
+            NetManager::GetInstance().OnDisconnected();
         }
     }
 
@@ -332,9 +384,11 @@ private:
         // JPEG straight from the sensor: no software encoding for AI photos,
         // and the phone stream can send frames as they are.
         config.pixel_format = PIXFORMAT_JPEG;
-        config.frame_size = FRAMESIZE_VGA;
+        // Buffers are sized for the photo size; the live view runs smaller (QVGA).
+        // The camera is only switched on when needed (see chitu_camera.cc).
+        config.frame_size = CAMERA_PHOTO_FRAMESIZE;
         config.jpeg_quality = 12;
-        config.fb_count = 2;  // AI photo + live stream can each hold a frame
+        config.fb_count = 2;
         config.fb_location = CAMERA_FB_IN_PSRAM;
         // Capture only when a buffer is free. GRAB_LATEST kept the camera writing to
         // PSRAM non-stop (cam_hal FB-OVF), competing with the speech model.
@@ -403,13 +457,19 @@ private:
             }
             auto& app = Application::GetInstance();
             if (say_it) {
-                app.WakeWordInvoke("(Someone sent you this message from the phone app: \"" + text +
-                                   "\". Read it out loud, then react to it in one short sentence.)");
+                chat_bridge::Say(chat_bridge::Kind::kReadAloud, text, true);
             } else if (app.GetDeviceState() == kDeviceStateIdle) {
                 app.PlaySound(Lang::Sounds::OGG_POPUP);
             }
         });
-        web_.Start(&motors_, GetAudioCodec(), &pet_);
+        WebConsole::Parts parts;
+        parts.motors = &motors_;
+        parts.codec = GetAudioCodec();
+        parts.pet = &pet_;
+        parts.camera = camera_;
+        parts.set_voice = [this](int p) { codec()->SetVoiceProfile(p); };
+        parts.get_voice = [this]() { return codec()->voice_profile(); };
+        web_.Start(parts);
     }
 
     void InitializeButtons() {
@@ -417,6 +477,10 @@ private:
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 EnterWifiConfigMode();
+                return;
+            }
+            if (NetManager::GetInstance().offline_by_owner()) {
+                NetManager::GetInstance().GoOnline();  // Wi-Fi was switched off from the phone
                 return;
             }
             app.ToggleChatState();
@@ -433,13 +497,25 @@ public:
         InitializeCamera();
         InitializeButtons();
         StartDiagnostics();
-        pet_.Start(
-            &motors_, display_,
-            [this](float x, float y) {
-                if (eyes_ != nullptr) eyes_->LookAt(x, y);
-            },
-            [this]() { return web_.RecentlyUsed(); },
-            [this]() { return eyes_ != nullptr && eyes_->ShowClock(CLOCK_SHOW_SECONDS, CLOCK_24H); });
+        codec()->LoadVoiceProfile();
+        NetManager::GetInstance().SetIdleCheck(
+            []() { return Application::GetInstance().GetDeviceState() == kDeviceStateIdle; });
+        NetManager::GetInstance().Start();
+        LocationService::GetInstance().Start([this](const std::string& kind) {
+            if (eyes_ != nullptr) eyes_->ShowInfo(kind, INFO_SHOW_SECONDS);
+        });
+        LocationService::GetInstance().RegisterMcpTools();
+        PetMode::Hooks hooks;
+        hooks.look = [this](float x, float y) {
+            if (eyes_ != nullptr) eyes_->LookAt(x, y);
+        };
+        hooks.show_clock = [this]() {
+            return eyes_ != nullptr && eyes_->ShowClock(CLOCK_SHOW_SECONDS, CLOCK_24H);
+        };
+        hooks.overlay_visible = [this]() { return eyes_ != nullptr && eyes_->OverlayVisible(); };
+        hooks.owner_driving = [this]() { return web_.OwnerDriving(); };
+        hooks.distance_mm = [this]() { return obstacle_.present() ? obstacle_.distance_mm() : -1; };
+        pet_.Start(&motors_, display_, hooks);
         ESP_LOGI(TAG, "Chitu board initialized");
     }
 
@@ -447,6 +523,19 @@ public:
         static GpioLed led(BUILTIN_LED_GPIO, 1);  // active low
         return &led;
     }
+
+    // Radio power saving only when switched on in config.h (it caused dropouts on
+    // some routers); otherwise the radio always stays awake.
+    void SetPowerSaveLevel(PowerSaveLevel level) override {
+        if (!WIFI_POWER_SAVE || level != PowerSaveLevel::LOW_POWER) {
+            level = PowerSaveLevel::PERFORMANCE;
+        } else {
+            level = PowerSaveLevel::BALANCED;
+        }
+        WifiBoard::SetPowerSaveLevel(level);
+    }
+
+    ChituAudioCodec* codec() { return static_cast<ChituAudioCodec*>(GetAudioCodec()); }
 
     AudioCodec* GetAudioCodec() override {
         static ChituAudioCodec audio_codec(

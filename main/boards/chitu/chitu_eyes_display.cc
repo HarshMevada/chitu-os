@@ -2,12 +2,17 @@
 
 #include "chitu_eyes_display.h"
 #include "chitu_emoji_font.h"
+#include "net_manager.h"
+#include "time_location.h"
 #include "audio_diag.h"
 #include "remote_audio.h"
 #include <material_symbols.h>
 #include <wifi_manager.h>
 
 LV_FONT_DECLARE(BUILTIN_ICON_FONT);
+LV_FONT_DECLARE(chitu_info_big_font);
+LV_FONT_DECLARE(chitu_info_font);
+LV_FONT_DECLARE(chitu_info_small_font);
 #include "application.h"
 #include "assets/lang_config.h"
 
@@ -191,6 +196,22 @@ void ChituEyesDisplay::SetupUI() {
     }
     lv_obj_add_flag(qr_layer_, LV_OBJ_FLAG_HIDDEN);
 
+    // Information page (time / date / weather after a question): three lines,
+    // the middle one in the biggest font
+    info_layer_ = MakeBox(screen, Off());
+    lv_obj_set_size(info_layer_, width_, height_);
+    lv_obj_set_pos(info_layer_, 0, 0);
+    lv_obj_move_foreground(info_layer_);
+    for (int i = 0; i < 3; i++) {
+        info_label_[i] = lv_label_create(info_layer_);
+        lv_obj_set_style_text_color(info_label_[i], Lit(), 0);
+        lv_obj_set_style_text_align(info_label_[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(info_label_[i], LV_LABEL_LONG_MODE_DOTS);
+        lv_obj_set_width(info_label_[i], width_);
+        lv_label_set_text(info_label_[i], "");
+    }
+    lv_obj_add_flag(info_layer_, LV_OBJ_FLAG_HIDDEN);
+
     // Status signs on top of the eyes: a live mic meter while listening,
     // and a "no Wi-Fi" / "!" sign when the connection is lost
     for (int i = 0; i < kMeterBars; i++) {
@@ -295,6 +316,33 @@ ChituEyesDisplay::Shape ChituEyesDisplay::ShapeFor(const char* emotion, bool* wa
     } else if (e == "nervous" || e == "eyes_shake") {
         both(0.85f, 0.1f, -8.0f, 0.0f);
         s.w_scale = 0.9f;
+    } else if (e == "bored") {
+        both(0.85f, 0.45f, 0.0f, 0.0f);  // heavy lids, looking down a bit
+        s.dy = 5;
+    } else if (e == "curious") {
+        s.eye[0].h_scale = 1.18f;  // one eye a little bigger, head tilted
+        s.eye[1].h_scale = 0.95f;
+        s.eye[1].top = 0.12f;
+        s.eye[1].angle = -8.0f;
+        s.dy = -3;
+    } else if (e == "playful") {
+        s.eye[0].h_scale = 1.1f;
+        s.eye[0].bottom = 0.35f;
+        s.eye[1].h_scale = 0.9f;
+        s.eye[1].bottom = 0.45f;
+    } else if (e == "cautious") {
+        both(0.8f, 0.28f, 6.0f, 0.0f);
+        s.w_scale = 0.9f;
+        s.dx = -6;
+    } else if (e == "yawn") {
+        both(0.35f, 0.55f, -10.0f, 0.0f);
+        s.dy = 4;
+    } else if (e == "alert") {
+        both(1.3f, 0.0f, 0.0f, 0.0f);
+        s.w_scale = 1.15f;
+        s.dy = -3;
+    } else if (e == "calm") {
+        *wander = true;
     } else if (e == "look_up_left" || e == "nhin tren trai") {
         s.dx = -kLookRangeX;
         s.dy = -kLookRangeY;
@@ -494,9 +542,11 @@ bool ChituEyesDisplay::SetEmotion(const char* emotion) {
     // Livelier expressions: a little motion on top of the eye shape
     if (e == "laughing" || e == "funny" || e == "excited") {
         StartFx(Fx::kBounce, 1600);
+    } else if (e == "playful") {
+        StartFx(Fx::kBounce, 900);
     } else if (e == "angry") {
         StartFx(Fx::kShake, 700);
-    } else if (e == "shocked" || e == "surprised") {
+    } else if (e == "shocked" || e == "surprised" || e == "alert") {
         StartFx(Fx::kShake, 300);
     } else if (e == "confused" || e == "dizzy") {
         StartFx(Fx::kRoll, 1400);
@@ -865,6 +915,7 @@ void ChituEyesDisplay::HideOverlays() {
     }
     if (clock_layer_ != nullptr) lv_obj_add_flag(clock_layer_, LV_OBJ_FLAG_HIDDEN);
     if (qr_layer_ != nullptr) lv_obj_add_flag(qr_layer_, LV_OBJ_FLAG_HIDDEN);
+    if (info_layer_ != nullptr) lv_obj_add_flag(info_layer_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void ChituEyesDisplay::ShowOverlayFor(lv_obj_t* layer, int seconds) {
@@ -897,8 +948,9 @@ bool ChituEyesDisplay::ShowClock(int seconds, bool hour24) {
     snprintf(buf, sizeof(buf), "%d:%02d", h, t.tm_min);
     DisplayLockGuard lock(this);
     if (clock_layer_ == nullptr || (msg_layer_ && !lv_obj_has_flag(msg_layer_, LV_OBJ_FLAG_HIDDEN)) ||
-        (qr_layer_ && !lv_obj_has_flag(qr_layer_, LV_OBJ_FLAG_HIDDEN))) {
-        return false;  // a message or QR code is on screen
+        (qr_layer_ && !lv_obj_has_flag(qr_layer_, LV_OBJ_FLAG_HIDDEN)) ||
+        (info_layer_ && !lv_obj_has_flag(info_layer_, LV_OBJ_FLAG_HIDDEN))) {
+        return false;  // a message, QR code or info page is on screen
     }
     lv_label_set_text(clock_label_, buf);
     lv_obj_center(clock_label_);
@@ -970,12 +1022,14 @@ void ChituEyesDisplay::UpdateSigns(uint32_t now) {
         wifi_lost_ = !wifi.IsConfigMode() && !wifi.IsConnected() && now > 8000;
     }
     const char* sign = nullptr;
-    if (wifi_lost_) {
+    bool by_owner = NetManager::GetInstance().offline_by_owner();
+    if (wifi_lost_ || by_owner) {
         sign = MATERIAL_SYMBOLS_WIFI_OFF;
     } else if (now < error_until_ms_) {
         sign = "!";
     }
-    bool blink_on = (now / 600) % 2 == 0;
+    // a lost connection blinks; Wi-Fi switched off on purpose stays steady
+    bool blink_on = by_owner || (now / 600) % 2 == 0;
     if (sign != nullptr && blink_on) {
         if (strcmp(lv_label_get_text(net_icon_), sign) != 0) {
             lv_label_set_text(net_icon_, sign);
@@ -989,3 +1043,110 @@ void ChituEyesDisplay::UpdateSigns(uint32_t now) {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Information pages
+// ---------------------------------------------------------------------------
+bool ChituEyesDisplay::OverlayVisible() {
+    DisplayLockGuard lock(this);
+    auto shown = [](lv_obj_t* o) { return o != nullptr && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); };
+    return shown(msg_layer_) || shown(qr_layer_) || shown(info_layer_);
+}
+
+void ChituEyesDisplay::ShowInfo(const std::string& kind, int seconds) {
+    auto& loc = LocationService::GetInstance();
+    std::string top, mid, bottom;
+    const lv_font_t* mid_font = &chitu_info_big_font;
+    time_t now = time(nullptr);
+    struct tm t = {};
+    bool clock_ok = loc.time_valid();
+    if (clock_ok) {
+        localtime_r(&now, &t);
+    }
+    char buf[48];
+    auto city = loc.place().city;
+
+    if (kind == "time") {
+        if (clock_ok) {
+            int h = t.tm_hour;
+            if (!CLOCK_24H) {
+                h = h % 12;
+                if (h == 0) h = 12;
+            }
+            snprintf(buf, sizeof(buf), "%d:%02d", h, t.tm_min);
+            mid = buf;
+            strftime(buf, sizeof(buf), "%A", &t);
+            top = buf;
+            bottom = CLOCK_24H ? city : std::string(t.tm_hour < 12 ? "AM" : "PM") + (city.empty() ? "" : "  " + city);
+        } else {
+            mid_font = &chitu_info_font;
+            mid = "Clock not set";
+            bottom = "Waiting for internet time";
+        }
+    } else if (kind == "date") {
+        if (clock_ok) {
+            strftime(buf, sizeof(buf), "%A", &t);
+            top = buf;
+            snprintf(buf, sizeof(buf), "%d", t.tm_mday);
+            mid = buf;
+            strftime(buf, sizeof(buf), "%B %Y", &t);
+            bottom = buf;
+        } else {
+            mid_font = &chitu_info_font;
+            mid = "Date not set";
+        }
+    } else if (kind == "month") {
+        mid_font = &chitu_info_font;
+        if (clock_ok) {
+            top = "This month is";
+            strftime(buf, sizeof(buf), "%B", &t);
+            mid = buf;
+            snprintf(buf, sizeof(buf), "%d", t.tm_year + 1900);
+            bottom = buf;
+        } else {
+            mid = "Date not set";
+        }
+    } else {  // weather / temperature
+        const char* unit = TEMP_FAHRENHEIT ? "F" : "C";
+        if (loc.weather_fresh()) {
+            auto w = loc.weather();
+            if (kind == "temperature") {
+                top = city;
+                snprintf(buf, sizeof(buf), "%d\xC2\xB0%s", (int)lroundf(w.temp), unit);
+                mid = buf;
+                snprintf(buf, sizeof(buf), "Feels like %d\xC2\xB0", (int)lroundf(w.feels));
+                bottom = buf;
+            } else {
+                top = LocationService::WeatherText(w.code);
+                snprintf(buf, sizeof(buf), "%d\xC2\xB0%s", (int)lroundf(w.temp), unit);
+                mid = buf;
+                snprintf(buf, sizeof(buf), "H %d\xC2\xB0  L %d\xC2\xB0  %d%%", (int)lroundf(w.high),
+                         (int)lroundf(w.low), w.humidity);
+                bottom = buf;
+            }
+        } else {
+            mid_font = &chitu_info_font;
+            top = city;
+            mid = "No weather";
+            bottom = "Check Wi-Fi or city";
+        }
+    }
+
+    DisplayLockGuard lock(this);
+    if (info_layer_ == nullptr) {
+        return;
+    }
+    lv_obj_set_style_text_font(info_label_[0], &chitu_info_small_font, 0);
+    lv_obj_set_style_text_font(info_label_[1], mid_font, 0);
+    lv_obj_set_style_text_font(info_label_[2], &chitu_info_small_font, 0);
+    lv_label_set_text(info_label_[0], top.c_str());
+    lv_label_set_text(info_label_[1], mid.c_str());
+    lv_label_set_text(info_label_[2], bottom.c_str());
+    lv_obj_align(info_label_[0], LV_ALIGN_TOP_MID, 0, -2);
+    lv_obj_align(info_label_[1], LV_ALIGN_CENTER, 0, mid_font == &chitu_info_big_font ? 1 : 0);
+    lv_obj_align(info_label_[2], LV_ALIGN_BOTTOM_MID, 0, 3);
+    if (msg_layer_ != nullptr) {
+        lv_obj_add_flag(msg_layer_, LV_OBJ_FLAG_HIDDEN);
+    }
+    ShowOverlayFor(info_layer_, seconds);
+}

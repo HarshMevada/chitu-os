@@ -52,7 +52,8 @@ inline Ring voice_out;   // robot output -> phone, output sample rate
 inline Ring room_out;    // robot mic -> phone, 16 kHz
 
 inline bool Init() {
-    return phone_mic.Init(16000 * 2) && voice_out.Init(24000 * 2) && room_out.Init(16000 * 2);
+    // phone mic: 4 s, so push-to-talk can hold what was said while Chitu opens the line
+    return phone_mic.Init(16000 * 2 * 4) && voice_out.Init(24000 * 2) && room_out.Init(16000 * 2);
 }
 
 // The phone mic counts as active while packets keep arriving

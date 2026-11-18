@@ -233,7 +233,14 @@ NetworkResult<> Ota::CheckVersion() {
             double ts = timestamp->valuedouble;
             
             // 如果有时区偏移，计算本地时间
+#if CONFIG_BOARD_TYPE_CHITU
+            // Chitu keeps the system clock in real UTC and applies its own time zone
+            // (from the configured city), so the server's offset must not be added.
+            (void)timezone_offset;
+            if (false) {
+#else
             if (cJSON_IsNumber(timezone_offset)) {
+#endif
                 ts += (timezone_offset->valueint * 60 * 1000); // 转换分钟为毫秒
             }
             

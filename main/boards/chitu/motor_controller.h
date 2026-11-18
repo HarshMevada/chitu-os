@@ -41,7 +41,8 @@ public:
     bool roaming() const { return roaming_.load(); }
 
     // Dance moves in the background (non-blocking) so music can play at the same time
-    bool StartDance(int seconds);
+    // beat_ms: beat period heard in the room (0 = default pace)
+    bool StartDance(int seconds, int beat_ms = 0);
     void StopDance();
     bool dancing() const { return dancing_.load(); }
 
@@ -97,6 +98,7 @@ private:
 
     std::atomic<bool> dancing_{false};
     std::atomic<int64_t> dance_until_us_{0};
+    std::atomic<int> beat_ms_{250};
     TaskHandle_t dance_task_ = nullptr;
     static void DanceEntry(void* arg);
     void DanceLoop();

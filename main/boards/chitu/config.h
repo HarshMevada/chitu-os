@@ -131,17 +131,56 @@
 #define CAMERA_HMIRROR 1
 #define CAMERA_VFLIP   1
 
-// Pet mode: what Chitu does on its own while idle (switch on/off in the phone console)
-#define PET_TIMEZONE             "IST-5:30"  // POSIX TZ string, for the quiet hours
-#define PET_QUIET_FROM_HOUR      22          // no chirps or chatter from 22:00 ...
-#define PET_QUIET_TO_HOUR        8           // ... until 08:00
-#define PET_SLEEP_AFTER_MINUTES  15          // dozes off after this long without attention
-#define PET_CHAT_MIN_MINUTES     25          // "chatty": speaks up on its own every 25-45 min
-#define PET_CHAT_MAX_MINUTES     45
-#define PET_MOVES                1           // 1 = small happy wiggles on the spot, 0 = eyes only
+// ---------------- Personality (what Chitu does on its own) ----------------
+// Switch on/off in the phone console (Chitu tab). Times are minutes without attention.
+#define PET_BORED_AFTER_MINUTES  3           // calm/curious -> bored/playful
+#define PET_SLEEPY_AFTER_MINUTES 10          // -> sleepy (yawns, droopy eyes)
+#define PET_SLEEP_AFTER_MINUTES  15          // -> asleep (eyes closed, "z z")
+#define PET_QUIET_FROM_HOUR      22          // no sounds or chatter from 22:00 ...
+#define PET_QUIET_TO_HOUR        8           // ... until 08:00 (local time)
+#define PET_CHAT_MIN_MINUTES     6           // "chatty": speaks up on its own every 6-15 min
+#define PET_CHAT_MAX_MINUTES     15          // (only while bored/playful, never at night)
+#define PET_MOVES                1           // 1 = small moves on the spot, 0 = face only
+#define PET_LOUD_SOUND_REACT     1           // 1 = startles at sudden loud sounds
+#define PET_MUSIC_DANCE          1           // 1 = dances when it hears rhythmic music
 
-// Screen: expressions only. While idle a big clock appears now and then.
-#define CLOCK_EVERY_SECONDS      45          // show the clock every 45 s while idle (0 = never)
+// ---------------- Voice profile (applies to everything Chitu says or plays) ----------------
+// The voice itself (male/female, language) is chosen on xiaozhi.me (Agent -> Voice).
+// On top of that the robot can change how it sounds:
+//   0 = natural   (as sent by the server)
+//   1 = cute      (higher pitch, +4 semitones)
+//   2 = tiny      (very high, +7 semitones)
+//   3 = deep      (lower pitch, -4 semitones)
+//   4 = robot     (metallic ring effect)
+// Can also be changed later in the phone console (Chitu tab); that choice is saved.
+#define VOICE_PROFILE            0
+
+// ---------------- Screen ----------------
+// Expressions only. While idle a big clock appears now and then.
+#define CLOCK_EVERY_SECONDS      90          // show the clock every 90 s while calm (0 = never)
 #define CLOCK_SHOW_SECONDS       4           // ... for 4 seconds
 #define CLOCK_24H                0           // 0 = 12-hour (7:05), 1 = 24-hour (19:05)
 #define QR_SHOW_SECONDS          45          // phone console QR code stays this long
+#define INFO_SHOW_SECONDS        8           // time / date / weather page after a question
+
+// ---------------- Time, place and weather ----------------
+// The city is found automatically from the internet address (approximate); set the
+// right city in the phone console (Setup tab) to override it. Times come from the
+// internet time servers (NTP), weather from open-meteo.com (no account needed).
+#define DEFAULT_TIMEZONE         "IST-5:30"  // used until a location is known (POSIX TZ)
+#define WEATHER_REFRESH_MINUTES  20
+#define WEATHER_MAX_AGE_MINUTES  90          // older weather is reported as unavailable
+#define TEMP_FAHRENHEIT          0           // 1 = show and say temperatures in F
+
+// ---------------- Camera ----------------
+// The camera is OFF unless needed: a photo question powers it up for a moment,
+// the phone console's live view keeps it on while you watch.
+#define CAMERA_IDLE_OFF_SECONDS  15          // switch off this long after the last use
+#define CAMERA_STREAM_FRAMESIZE  FRAMESIZE_QVGA   // live view 320x240 (smooth on Wi-Fi)
+#define CAMERA_PHOTO_FRAMESIZE   FRAMESIZE_VGA    // AI photos 640x480
+
+// ---------------- Wi-Fi stability ----------------
+// 0 = no power saving (most stable, ~+40 mA), 1 = light power saving
+#define WIFI_POWER_SAVE          0
+// Go back to the preferred (first) saved network when away from it for this long
+#define WIFI_PREFERRED_RETRY_MINUTES 15

@@ -351,8 +351,10 @@ void MotorController::RoamLoop() {
     ESP_LOGI(TAG, "Roaming ended");
 }
 
-bool MotorController::StartDance(int seconds) {
+bool MotorController::StartDance(int seconds, int beat_ms) {
     seconds = std::clamp(seconds, 3, 120);
+    // steps last one beat (250 ms by default); a heard beat of 330-1000 ms sets the pace
+    beat_ms_ = beat_ms > 0 ? std::clamp(beat_ms, 330, 1000) / 2 : 250;
     StopRoam();
     dance_until_us_ = esp_timer_get_time() + (int64_t)seconds * 1000 * 1000;
     if (dancing_.exchange(true) || dance_task_ != nullptr) {
@@ -399,8 +401,9 @@ void MotorController::DanceLoop() {
     while (dancing_ && esp_timer_get_time() < dance_until_us_) {
         for (const auto& st : kRoutine) {
             if (!dancing_ || esp_timer_get_time() >= dance_until_us_) break;
-            Drive(st.l, st.r, st.speed, st.ms);
-            if (!pause(st.ms + 30)) break;
+            int ms = st.ms * beat_ms_.load() / 250;  // routine stretched to the beat
+            Drive(st.l, st.r, st.speed, ms);
+            if (!pause(ms + 30)) break;
         }
     }
     if (dancing_.exchange(false)) {

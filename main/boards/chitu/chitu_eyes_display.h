@@ -35,6 +35,11 @@ public:
     bool ShowClock(int seconds, bool hour24);
     // Full-screen QR code (e.g. the phone console address)
     void ShowQrCode(const std::string& text, int seconds);
+    // Full-screen information page in the biggest readable letters:
+    // kind = "time", "date", "month", "weather" or "temperature"
+    void ShowInfo(const std::string& kind, int seconds);
+    // True while a message / QR code / info page covers the eyes
+    bool OverlayVisible();
 
 private:
     struct EyeParams {
@@ -85,6 +90,8 @@ private:
     lv_obj_t* clock_layer_ = nullptr;
     lv_obj_t* clock_label_ = nullptr;
     lv_obj_t* qr_layer_ = nullptr;
+    lv_obj_t* info_layer_ = nullptr;
+    lv_obj_t* info_label_[3] = {nullptr, nullptr, nullptr};
     lv_obj_t* qr_ = nullptr;  // canvas
     uint8_t* qr_buf_ = nullptr;
     lv_timer_t* overlay_timer_ = nullptr;

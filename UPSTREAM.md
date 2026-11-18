@@ -11,6 +11,8 @@
 - Project renamed `chitu` (version 1.0.0); Wi-Fi setup hotspot prefix `Chitu`
 - Removed upstream CI, docker, release scripts, script tests, other-chip sdkconfig defaults
 - `scripts/build.py`: only the OLED display choice is looked up (LCD choice removed)
+- `main/ota.cc`: for Chitu the server time is stored as real UTC (the server's time zone
+  offset is not added); Chitu applies the time zone of its configured city itself
 
 ## Pulling a fix from upstream later
 ```
