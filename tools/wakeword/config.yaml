@@ -1,39 +1,43 @@
 # What the robot should wake up to
-name: hey_chitu
-wake_word: "Hey Chitu"
+name: chitu
+wake_word: "Chitu"
 
 # Ways a voice engine might say it (phonetic spellings help the TTS)
 positive_phrases:
-  - "hey chitu"
-  - "hey chee too"
-  - "hey cheetoo"
-  - "hey chitoo"
-  - "hay chee-too"
+  - "chitu"
+  - "chee too"
+  - "cheetoo"
+  - "chitoo"
+  - "chee-too!"
+  - "chitu?"
 # Hindi voice (Indian pronunciation). Skipped if the voice cannot be downloaded.
 positive_phrases_hindi:
-  - "हे चीटू"
-  - "हे चिटू"
+  - "चीटू"
+  - "चिटू"
 
-# Similar-sounding phrases the robot must NOT wake up to
+# Similar-sounding words the robot must NOT wake up to
 negative_phrases:
-  - "hey cheetah"
-  - "hey peter"
-  - "hey chew"
+  - "cheetah"
   - "cheetos"
-  - "hey there"
-  - "hey tutu"
-  - "hey jitu"
-  - "hi chintu"
-  - "kitchen"
-  - "hey city"
-  - "chicken too"
-  - "hey you too"
-  - "he chew"
-  - "hey sheeto"
+  - "peter"
+  - "chew"
+  - "chutney"
+  - "chintu"
+  - "jitu"
+  - "pintu"
+  - "kitty"
+  - "city"
+  - "chicken"
+  - "teach you"
+  - "reach to"
+  - "she too"
+  - "tutu"
   - "chitchat"
+  - "cheat"
+  - "two"
 
-positive_samples_per_phrase: 800
-hindi_samples_per_phrase: 300
+positive_samples_per_phrase: 700
+hindi_samples_per_phrase: 400
 negative_samples_per_phrase: 150
 
 training_steps: 12000

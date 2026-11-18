@@ -1,6 +1,6 @@
 name: Train wake word
 
-# Trains the "Hey Chitu" wake word (microWakeWord) on GitHub's computers and
+# Trains the "Chitu" wake word (microWakeWord) on GitHub's computers and
 # commits the model to main/assets/wakeword/. Runs when tools/wakeword changes.
 on:
   push:
@@ -75,7 +75,7 @@ jobs:
           git config user.name "Chitu wake word trainer"
           git config user.email "actions@users.noreply.github.com"
           git add main/assets/wakeword
-          git commit -m "Wake word model: Hey Chitu (trained)" || exit 0
+          git commit -m "Wake word model: Chitu (trained)" || exit 0
           git pull --rebase -q origin main
           git push origin HEAD:main
 
@@ -83,7 +83,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: hey-chitu-model
+          name: chitu-model
           path: |
             main/assets/wakeword
             /mnt/ww/trained_models/wakeword/tflite_stream_state_internal_quant/*.txt
