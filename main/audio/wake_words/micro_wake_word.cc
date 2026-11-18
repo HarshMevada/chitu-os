@@ -9,12 +9,10 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 
-#include <tensorflow/lite/core/c/common.h>
 #include <tensorflow/lite/micro/micro_allocator.h>
 #include <tensorflow/lite/micro/micro_interpreter.h>
 #include <tensorflow/lite/micro/micro_mutable_op_resolver.h>
 #include <tensorflow/lite/micro/micro_resource_variable.h>
-#include <tensorflow/lite/schema/schema_generated.h>
 
 #define TAG "MicroWakeWord"
 
