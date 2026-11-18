@@ -40,9 +40,10 @@ const char* NetManager::ReasonText(int reason) {
         case WIFI_REASON_HANDSHAKE_TIMEOUT: return "wrong password or router refused";
         case WIFI_REASON_NO_AP_FOUND: return "network not found";
         case WIFI_REASON_BEACON_TIMEOUT: return "signal lost (weak signal or router busy)";
-        case WIFI_REASON_ASSOC_LEAVE: return "left the network";
-        case WIFI_REASON_ASSOC_EXPIRE:
-        case WIFI_REASON_AUTH_LEAVE: return "router dropped the robot";
+        case 8: return "left the network";
+        case 4:  // disassociated due to inactivity
+        case 3:  // deauthenticated, station left
+            return "router dropped the robot";
         case WIFI_REASON_CONNECTION_FAIL: return "connection failed";
         default: return "other";
     }
