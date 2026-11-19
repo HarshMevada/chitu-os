@@ -147,10 +147,19 @@ void ObstacleSensor::TaskLoop() {
         } else if (fails >= kTimeoutFails) {
             st = Status::kTimeout;  // keep the last filtered value for now
         } else {
-            int sorted[kWindow];
-            std::copy(hist, hist + count, sorted);
-            std::sort(sorted, sorted + count);
-            int median = sorted[count / 2];
+            // median of the good readings (small insertion sort; count is 3..5)
+            int sorted[kWindow] = {0};
+            int n = 0;
+            for (int i = 0; i < count && i < kWindow; i++) {
+                int v = hist[i];
+                int j = n++;
+                while (j > 0 && sorted[j - 1] > v) {
+                    sorted[j] = sorted[j - 1];
+                    j--;
+                }
+                sorted[j] = v;
+            }
+            int median = sorted[n / 2];
             distance_mm_ = median;
             st = median >= kFarMm ? Status::kNoTarget : Status::kOk;
             // Obstacle decision with hysteresis so it does not flicker at the limit
