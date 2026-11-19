@@ -37,14 +37,16 @@ public:
         std::function<bool()> overlay_visible;        // message / QR / info page on screen
         std::function<bool()> owner_driving;          // joystick used in the last seconds
         std::function<int()> distance_mm;             // -1 when there is no sensor
+        std::function<bool()> busy;                   // something else owns Chitu (alarm ringing)
     };
 
     void Start(MotorController* motors, Display* display, Hooks hooks);
 
+    // The personality is always on (the separate on/off "pet mode" switch was removed);
+    // how chatty and how mobile it is can still be chosen.
     bool enabled() const { return enabled_.load(); }
     bool chatty() const { return chatty_.load(); }
     bool moves() const { return moves_.load(); }
-    void SetEnabled(bool on);
     void SetChatty(bool on);
     void SetMoves(bool on);
 

@@ -40,7 +40,8 @@
 // by this (whole number). Raise to 12-16 if it doesn't wake from across the room,
 // lower to 4-6 if it hears itself or keeps triggering.
 #define MIC_GAIN                 8
-// Volume on first boot (0-100). Later changes ("set volume to 80") are remembered.
+// Volume at every start / restart (0-100). Changes from the console or by voice last
+// until the next restart. 100 = full scale: the soft limiter above keeps it clean.
 #define DEFAULT_OUTPUT_VOLUME    100
 
 // MAX98357 I2S amplifier
@@ -94,12 +95,32 @@
 // Without it the robot still works; roaming is simply refused.
 #define TOF_I2C_ADDR             0x52
 #define TOF_I2C_SPEED_HZ         100000
-#define OBSTACLE_STOP_MM         200    // forward moves stop closer than this
+#define OBSTACLE_STOP_MM         100    // forward moves stop closer than this (manual + AI)
+#define OBSTACLE_HYSTERESIS_MM   30     // ... and are allowed again only beyond 100 + 30 mm
+#define TOF_OFFSET_MM            0      // calibration: added to every reading (measure a box
+                                        // at 100 mm; if it shows 115, set -15)
+#define TOF_MIN_VALID_MM         20     // single readings below this are glitches
+#define TOF_MAX_VALID_MM         2000   // beyond this (or 0) = nothing in front
 #define ROAM_AVOID_MM            320    // roaming turns away closer than this
 #define ROAM_SPEED               60     // percent
 #define ROAM_TURN_MS_MIN         350
 #define ROAM_TURN_MS_MAX         900
 #define ROAM_MAX_MINUTES         30
+
+// ---------------- Listening ----------------
+// Chitu stops listening by itself (back to idle) when:
+#define LISTEN_NO_SPEECH_SECONDS     6   // nothing was said since listening started
+#define LISTEN_AFTER_SPEECH_SECONDS  8   // you spoke, then silence and no reply arrived
+#define LISTEN_MAX_SECONDS           30  // one turn never listens longer than this
+
+// ---------------- Alarms ----------------
+#define ALARM_MAX                    8   // alarms that can be saved
+#define ALARM_RESUME_MINUTES         30  // an alarm ringing at a power cut rings again on
+                                         // start-up if it began less than this long ago
+#define ALARM_CATCH_UP_MINUTES       10  // an alarm missed while switched off still rings
+                                         // if Chitu starts within this time
+#define ALARM_MIN_VOLUME             70  // alarms ring at least this loud (volume restored after)
+#define ALARM_MOVES                  1   // 1 = small wiggles on the spot while ringing
 
 // ---------------- Phone web console ----------------
 #define WEB_CONSOLE_PORT         80     // control page
@@ -132,7 +153,8 @@
 #define CAMERA_VFLIP   1
 
 // ---------------- Personality (what Chitu does on its own) ----------------
-// Switch on/off in the phone console (Chitu tab). Times are minutes without attention.
+// Always on. "Chatty" and "Little moves" can be switched in the phone console (Chitu sheet).
+// Times are minutes without attention.
 #define PET_BORED_AFTER_MINUTES  3           // calm/curious -> bored/playful
 #define PET_SLEEPY_AFTER_MINUTES 10          // -> sleepy (yawns, droopy eyes)
 #define PET_SLEEP_AFTER_MINUTES  15          // -> asleep (eyes closed, "z z")
@@ -177,6 +199,10 @@
 // the phone console's live view keeps it on while you watch.
 #define CAMERA_IDLE_OFF_SECONDS  15          // switch off this long after the last use
 #define CAMERA_STREAM_FRAMESIZE  FRAMESIZE_QVGA   // live view 320x240 (smooth on Wi-Fi)
+#define CAMERA_STREAM_QUALITY    15               // live view JPEG quality (higher = smaller frames)
+#define CAMERA_PHOTO_QUALITY     12               // AI photos
+#define VIDEO_FPS_MAX            10               // live view frames per second, standing still
+#define VIDEO_FPS_DRIVING        5                // ... while driving (motors come first)
 #define CAMERA_PHOTO_FRAMESIZE   FRAMESIZE_VGA    // AI photos 640x480
 
 // ---------------- Wi-Fi stability ----------------

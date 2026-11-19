@@ -8,8 +8,10 @@
 #include "chitu_cert.h"
 #include "config.h"
 #include "device_state_machine.h"
+#include "alarm_manager.h"
 #include "motor_controller.h"
 #include "net_manager.h"
+#include "obstacle_sensor.h"
 #include "pet_mode.h"
 #include "remote_audio.h"
 #include "settings.h"
@@ -42,11 +44,13 @@ constexpr uint8_t kWsMicIn = 0x01;     // phone -> robot: 16 kHz int16 mono
 constexpr uint8_t kWsVideo = 0x10;     // robot -> phone: JPEG frame
 constexpr uint8_t kWsVoice = 0x20;     // robot -> phone: Chitu's voice, output sample rate
 constexpr uint8_t kWsRoom = 0x21;      // robot -> phone: room sound, 16 kHz
-constexpr int kVideoMinIntervalMs = 100;  // at most ~10 fps
+constexpr int kVideoMinIntervalMs = 1000 / VIDEO_FPS_MAX;         // standing still
+constexpr int kVideoDrivingIntervalMs = 1000 / VIDEO_FPS_DRIVING;  // while the motors run
 constexpr size_t kRxMax = 8192;
 
 // Push-to-talk state (shared with the audio codec)
 std::atomic<bool> g_ptt_hold{false};
+std::atomic<bool> g_talk_down{false};  // the talk button is pressed right now
 
 bool QueryValue(const char* query, const char* key, char* out, size_t out_len) {
     return httpd_query_key_value(query, key, out, out_len) == ESP_OK;
@@ -132,6 +136,7 @@ struct CityJob {
 }  // namespace
 
 bool WebConsole::HoldPhoneAudio() { return g_ptt_hold.load(); }
+bool WebConsole::TalkHeld() { return g_talk_down.load(); }
 
 std::string WebConsole::Url() const {
     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -167,10 +172,13 @@ void WebConsole::Start(const Parts& parts) {
     ssl.port_secure = WEB_CONSOLE_PORT_SECURE;
     ssl.httpd.ctrl_port = 32780;
     ssl.httpd.max_open_sockets = 7;
-    ssl.httpd.max_uri_handlers = 12;
+    ssl.httpd.max_uri_handlers = 16;
     ssl.httpd.lru_purge_enable = true;
-    ssl.httpd.recv_wait_timeout = 10;
-    ssl.httpd.send_wait_timeout = 10;
+    // One web server task serves everything (page, commands, camera frames). A phone on a
+    // weak link could hold it for 10 s per stalled send, which froze the console and let
+    // the drive commands time out. Give up on a stalled socket sooner.
+    ssl.httpd.recv_wait_timeout = 5;
+    ssl.httpd.send_wait_timeout = 3;
     if (httpd_ssl_start(&secure_server_, &ssl) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start the secure web console");
         secure_server_ = nullptr;
@@ -185,6 +193,8 @@ void WebConsole::Start(const Parts& parts) {
         {.uri = "/wifi", .method = HTTP_POST, .handler = HandleWifi, .user_ctx = this},
         {.uri = "/city", .method = HTTP_GET, .handler = HandleCity, .user_ctx = this},
         {.uri = "/city", .method = HTTP_POST, .handler = HandleCitySet, .user_ctx = this},
+        {.uri = "/alarms", .method = HTTP_GET, .handler = HandleAlarms, .user_ctx = this},
+        {.uri = "/alarms", .method = HTTP_POST, .handler = HandleAlarmsSet, .user_ctx = this},
     };
     for (const auto& h : handlers) {
         httpd_register_uri_handler(secure_server_, &h);
@@ -262,6 +272,7 @@ void WebConsole::SetVideo(bool on) {
 // stop is sent only after everything that was said has been passed on.
 void WebConsole::PushToTalk(bool on) {
     auto& app = Application::GetInstance();
+    g_talk_down = on;
     if (on) {
         remote_audio::phone_mic.Clear();
         g_ptt_hold = true;
@@ -303,6 +314,45 @@ void WebConsole::PushToTalk(bool on) {
         "ptt_close", 2560, nullptr, 4, nullptr);
 }
 
+// Joystick: x/y -100..100, max_speed = top speed. Both wheels share one speed line on
+// this board, so the stick picks one of 8 moves (forward, curves, spins, back) and the
+// distance from the centre sets the speed. Each command lasts 600 ms: the page repeats
+// it while the stick is held, so the robot stops by itself if the phone goes away.
+bool WebConsole::DriveJoy(int xi, int yi, int max_speed_in) {
+    auto* motors = parts_.motors;
+    if (motors == nullptr) {
+        return false;
+    }
+    int max_speed = std::clamp(max_speed_in, 35, 100);
+    float x = std::clamp(xi, -100, 100) / 100.0f;
+    float y = std::clamp(yi, -100, 100) / 100.0f;
+    float mag = std::min(1.0f, sqrtf(x * x + y * y));
+    last_drive_us_ = esp_timer_get_time();
+    motors->StopRoam();
+    motors->StopDance();
+    if (parts_.obstacle != nullptr) {
+        parts_.obstacle->LogFor(3000);  // TOF readings in the serial log while driving
+    }
+    if (mag < 0.25f) {
+        motors->Stop();
+        return true;
+    }
+    using D = MotorController::Dir;
+    int sector = (int)lroundf(atan2f(y, x) / (float)(M_PI / 4)) & 7;
+    static const D kMoves[8][2] = {
+        {D::kForward, D::kBackward},   // right: spin right
+        {D::kForward, D::kStop},       // forward-right: curve
+        {D::kForward, D::kForward},    // forward
+        {D::kStop, D::kForward},       // forward-left: curve
+        {D::kBackward, D::kForward},   // left: spin left
+        {D::kStop, D::kBackward},      // back-left
+        {D::kBackward, D::kBackward},  // back
+        {D::kBackward, D::kStop},      // back-right
+    };
+    int speed = 35 + (int)lroundf((max_speed - 35) * (mag - 0.25f) / 0.75f);
+    return motors->Drive(kMoves[sector][0], kMoves[sector][1], speed, 600);
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -333,34 +383,7 @@ esp_err_t WebConsole::HandleCmd(httpd_req_t* req) {
         // stops by itself if the phone disconnects (dead-man switch).
         ok = motors->DriveNamed(dir, speed, 600);
     } else if (strcmp(action, "joy") == 0) {
-        // Joystick: x/y -100..100, s = max speed. Both wheels share one speed line on
-        // this board, so the stick picks one of 8 moves (forward, curves, spins, back)
-        // and the distance from the centre sets the speed.
-        int max_speed = std::clamp(QueryInt(query, "s", 75), 35, 100);
-        float x = std::clamp(QueryInt(query, "x", 0), -100, 100) / 100.0f;
-        float y = std::clamp(QueryInt(query, "y", 0), -100, 100) / 100.0f;
-        float mag = std::min(1.0f, sqrtf(x * x + y * y));
-        self->last_drive_us_ = esp_timer_get_time();
-        motors->StopRoam();
-        motors->StopDance();
-        if (mag < 0.25f) {
-            motors->Stop();
-        } else {
-            using D = MotorController::Dir;
-            int sector = (int)lroundf(atan2f(y, x) / (float)(M_PI / 4)) & 7;
-            static const D kMoves[8][2] = {
-                {D::kForward, D::kBackward},   // right: spin right
-                {D::kForward, D::kStop},       // forward-right: curve
-                {D::kForward, D::kForward},    // forward
-                {D::kStop, D::kForward},       // forward-left: curve
-                {D::kBackward, D::kForward},   // left: spin left
-                {D::kStop, D::kBackward},      // back-left
-                {D::kBackward, D::kBackward},  // back
-                {D::kBackward, D::kStop},      // back-right
-            };
-            int speed = 35 + (int)lroundf((max_speed - 35) * (mag - 0.25f) / 0.75f);
-            ok = motors->Drive(kMoves[sector][0], kMoves[sector][1], speed, 600);
-        }
+        ok = self->DriveJoy(QueryInt(query, "x", 0), QueryInt(query, "y", 0), QueryInt(query, "s", 75));
     } else if (strcmp(action, "stop") == 0) {
         motors->Stop();  // motors first: safety
     } else if (strcmp(action, "roam") == 0) {
@@ -393,8 +416,8 @@ esp_err_t WebConsole::HandleCmd(httpd_req_t* req) {
         bool on = QueryOn(query);
         self->SetVideo(on);
         ok = !on || self->video_on_;
-    } else if (strcmp(action, "pet") == 0) {
-        if (pet != nullptr) pet->SetEnabled(QueryOn(query));
+    } else if (strcmp(action, "alarm_stop") == 0) {
+        AlarmManager::GetInstance().Stop("console", false);
     } else if (strcmp(action, "chatty") == 0) {
         if (pet != nullptr) pet->SetChatty(QueryOn(query));
     } else if (strcmp(action, "moves") == 0) {
@@ -519,6 +542,42 @@ esp_err_t WebConsole::HandleCitySet(httpd_req_t* req) {
 }
 
 // ---------------------------------------------------------------------------
+// Alarms
+// ---------------------------------------------------------------------------
+esp_err_t WebConsole::HandleAlarms(httpd_req_t* req) {
+    return SendJson(req, AlarmManager::GetInstance().ListJson());
+}
+
+// POST op=save&id=&h=&m=&days=&en=&label=  |  op=del&id=  |  op=en&id=&on=
+esp_err_t WebConsole::HandleAlarmsSet(httpd_req_t* req) {
+    std::string body;
+    if (!ReadBody(req, &body, 400)) {
+        return SendJson(req, "{\"ok\":false,\"error\":\"No data\"}");
+    }
+    auto& alarms = AlarmManager::GetInstance();
+    std::string op = FormValue(body, "op");
+    int id = atoi(FormValue(body, "id").c_str());
+    bool ok = false;
+    std::string error;
+    if (op == "save") {
+        std::string idv = FormValue(body, "id");
+        int new_id = 0;
+        ok = alarms.Save(idv.empty() ? -1 : id, atoi(FormValue(body, "h").c_str()),
+                         atoi(FormValue(body, "m").c_str()), (uint8_t)atoi(FormValue(body, "days").c_str()),
+                         FormValue(body, "label"), FormValue(body, "en") != "0", &new_id, &error);
+    } else if (op == "del") {
+        ok = alarms.Remove(id);
+    } else if (op == "en") {
+        ok = alarms.SetEnabled(id, FormValue(body, "on") == "1");
+    } else {
+        error = "Unknown operation";
+    }
+    if (!ok && error.empty()) error = "Alarm not found";
+    return SendJson(req, std::string("{\"ok\":") + (ok ? "true" : "false") + ",\"error\":\"" +
+                             JsonEscape(error) + "\"}");
+}
+
+// ---------------------------------------------------------------------------
 // Status
 // ---------------------------------------------------------------------------
 esp_err_t WebConsole::HandleStatus(httpd_req_t* req) {
@@ -544,6 +603,8 @@ esp_err_t WebConsole::HandleStatus(httpd_req_t* req) {
         ",\"ir\":" + std::to_string(codec ? codec->input_sample_rate() : 16000) +
         ",\"or\":" + std::to_string(codec ? codec->output_sample_rate() : 24000) +
         ",\"pet\":" + (self->parts_.pet ? self->parts_.pet->StatusJson() : std::string("{}")) +
+        ",\"tof\":" + (self->parts_.obstacle ? self->parts_.obstacle->StatusJson() : std::string("{\"st\":\"none\"}")) +
+        ",\"alarm\":" + AlarmManager::GetInstance().RingJson() +
         ",\"voice\":" + std::to_string(self->parts_.get_voice ? self->parts_.get_voice() : 0) +
         ",\"net_ok\":" + (NetManager::GetInstance().connected() ? "true" : "false") +
         ",\"st\":\"" + JsonEscape(DeviceStateMachine::GetStateName(state)) + "\"" +
@@ -603,6 +664,22 @@ esp_err_t WebConsole::HandleWs(httpd_req_t* req) {
     if (frame.type == HTTPD_WS_TYPE_BINARY && frame.len > 1 && frame.payload[0] == kWsMicIn) {
         remote_audio::phone_mic.Push(frame.payload + 1, (frame.len - 1) & ~1u);
         remote_audio::last_phone_mic_us = esp_timer_get_time();
+    } else if (frame.type == HTTPD_WS_TYPE_TEXT && frame.len > 0 && frame.len < 64 &&
+               fd == self->client_fd_.load()) {
+        // Driving over the open WebSocket: no new HTTPS request per joystick update,
+        // so the stick stays responsive while the camera stream is running.
+        //   "j <x> <y> <max speed>"   joystick      "x"   stop now
+        char text[64];
+        memcpy(text, frame.payload, frame.len);
+        text[frame.len] = '\0';
+        if (text[0] == 'j') {
+            int x = 0, y = 0, sp = 75;
+            if (sscanf(text + 1, "%d %d %d", &x, &y, &sp) >= 2) {
+                self->DriveJoy(x, y, sp);
+            }
+        } else if (text[0] == 'x' && self->parts_.motors != nullptr) {
+            self->parts_.motors->Stop();
+        }
     }
     return ESP_OK;
 }
@@ -697,9 +774,13 @@ void WebConsole::MediaLoop() {
         }
 
         // Video: the frame rate adapts to how fast Wi-Fi takes the frames, so a slow
-        // link gets fewer frames instead of a frozen picture and a dropped connection
+        // link gets fewer frames instead of a frozen picture and a dropped connection.
+        // While driving it is capped lower so commands and the motors come first.
+        bool driving = OwnerDriving() && (parts_.motors == nullptr || parts_.motors->moving() ||
+                                          now - last_drive_us_.load() < 1500LL * 1000);
+        int min_interval = driving ? kVideoDrivingIntervalMs : kVideoMinIntervalMs;
         if (ok && video_on_ && parts_.camera != nullptr &&
-            (now - last_frame_us) / 1000 >= frame_interval_ms) {
+            (now - last_frame_us) / 1000 >= std::max(frame_interval_ms, min_interval)) {
             camera_fb_t* fb = parts_.camera->GetStreamFrame();
             if (fb != nullptr) {
                 last_frame_us = now;

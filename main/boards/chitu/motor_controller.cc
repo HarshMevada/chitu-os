@@ -93,7 +93,9 @@ void MotorController::Initialize() {
         ESP_LOGE(TAG, "Failed to create command queue");
         return;
     }
-    if (xTaskCreate(TaskEntry, "chitu_motor", 3584, this, 5, &task_) != pdPASS) {
+    // Highest of Chitu's own tasks: movement and its safety stop never wait for the
+    // camera stream, the web server or the personality
+    if (xTaskCreate(TaskEntry, "chitu_motor", 3584, this, 6, &task_) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create motor task");
         task_ = nullptr;
         return;
@@ -101,12 +103,15 @@ void MotorController::Initialize() {
     ESP_LOGI(TAG, "Motor controller ready (PWM GPIO%d @ %d Hz)", MOTOR_PWM_GPIO, MOTOR_PWM_FREQ_HZ);
 }
 
-bool MotorController::ObstacleAhead() const {
-    if (!distance_) {
-        return false;
+const char* MotorController::PathName(Path p) {
+    switch (p) {
+        case Path::kClear:
+            return "clear";
+        case Path::kBlocked:
+            return "blocked";
+        default:
+            return "sensor_fault";
     }
-    int mm = distance_();
-    return mm > 0 && mm < OBSTACLE_STOP_MM;
 }
 
 bool MotorController::Drive(Dir left, Dir right, int speed, int duration_ms) {
@@ -158,11 +163,12 @@ void MotorController::TaskLoop() {
         while (have_cmd) {
             bool is_stop = (cmd.left == Dir::kStop && cmd.right == Dir::kStop) || cmd.speed == 0 ||
                            cmd.duration_ms == 0;
-            bool forward_move = cmd.left == Dir::kForward && cmd.right == Dir::kForward;
+            bool forward_move = GoesForward(cmd.left, cmd.right);
             if (is_stop || (forward_move && ObstacleAhead())) {
                 if (!is_stop) {
                     obstacle_stop_ = true;
-                    ESP_LOGW(TAG, "Obstacle at %d mm - not moving forward", distance_mm());
+                    ESP_LOGW(TAG, "Not moving forward: path %s (%d mm)", PathName(PathAhead()),
+                             distance_mm());
                 }
                 ApplyStop();
                 break;
@@ -185,7 +191,7 @@ void MotorController::TaskLoop() {
                 }
                 if (forward_move && ObstacleAhead()) {
                     obstacle_stop_ = true;
-                    ESP_LOGW(TAG, "Obstacle at %d mm - stopping", distance_mm());
+                    ESP_LOGW(TAG, "Stopping: path %s (%d mm)", PathName(PathAhead()), distance_mm());
                     break;
                 }
             }
@@ -418,8 +424,9 @@ std::string MotorController::StatusJson() const {
            ",\"dancing\":" + (dancing() ? "true" : "false") + ",\"left\":\"" +
            DirName(left_dir()) + "\",\"right\":\"" + DirName(right_dir()) +
            "\",\"speed\":" + std::to_string(speed()) +
-           ",\"distance_mm\":" + std::to_string(distance_mm()) +
-           ",\"obstacle_stop\":" + (obstacle_stop_ ? "true" : "false") + "}";
+           ",\"distance_mm\":" + std::to_string(distance_mm()) + ",\"path\":\"" +
+           (path_ ? PathName(PathAhead()) : "no_sensor") + "\",\"obstacle_stop\":" +
+           (obstacle_stop_ && ObstacleAhead() ? "true" : "false") + "}";
 }
 
 // ---------------------------------------------------------------------------
@@ -447,9 +454,13 @@ void MotorController::RegisterMcpTools() {
             int speed = properties["speed"].value<int>();
             int duration = properties["duration_ms"].value<int>();
             StopRoam();
-            if (direction == "forward" && ObstacleAhead()) {
+            if (direction == "forward" && PathAhead() == Path::kBlocked) {
                 return ErrorJson("Obstacle ahead at " + std::to_string(distance_mm() / 10) +
                                  " cm, cannot move forward. Turn or back up first.");
+            }
+            if (direction == "forward" && PathAhead() == Path::kUnknown) {
+                return ErrorJson("The distance sensor is not giving readings, so moving forward "
+                                 "is not safe. Turning and backing up still work.");
             }
             if (!DriveNamed(direction, speed, duration)) {
                 return ErrorJson("Invalid direction. Use forward, backward, left or right.");
