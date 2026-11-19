@@ -21,6 +21,9 @@ public:
     using MoveCallback = std::function<void(Dir left, Dir right)>;
     // Returns the distance ahead in mm, or -1 if unknown.
     using DistanceSource = std::function<int()>;
+    // Is the way ahead free? kUnknown = the sensor exists but gives no valid data.
+    enum class Path : int8_t { kClear, kBlocked, kUnknown };
+    using PathSource = std::function<Path()>;
 
     MotorController();
     ~MotorController() = default;
@@ -28,6 +31,10 @@ public:
     void Initialize();
     void SetMoveCallback(MoveCallback cb) { move_cb_ = std::move(cb); }
     void SetDistanceSource(DistanceSource src) { distance_ = std::move(src); }
+    // Without a path source forward moves are never blocked (no sensor fitted)
+    void SetPathSource(PathSource src) { path_ = std::move(src); }
+    Path PathAhead() const { return path_ ? path_() : Path::kClear; }
+    static const char* PathName(Path p);
 
     // speed 0-100 (%), duration in ms (clamped to MOTOR_MAX_DURATION_MS)
     bool Drive(Dir left, Dir right, int speed, int duration_ms);
@@ -71,6 +78,7 @@ private:
     TaskHandle_t task_ = nullptr;
     MoveCallback move_cb_;
     DistanceSource distance_;
+    PathSource path_;
 
     std::atomic<bool> moving_{false};
     std::atomic<int> speed_{0};
@@ -91,7 +99,10 @@ private:
     void SetDuty(uint32_t duty);
     void RampTo(uint32_t target_duty);
     uint32_t SpeedToDuty(int speed) const;
-    bool ObstacleAhead() const;
+    bool ObstacleAhead() const { return PathAhead() != Path::kClear; }
+    static bool GoesForward(Dir l, Dir r) {
+        return (l == Dir::kForward || r == Dir::kForward) && l != Dir::kBackward && r != Dir::kBackward;
+    }
 
     static void RoamEntry(void* arg);
     void RoamLoop();

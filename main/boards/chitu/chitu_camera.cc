@@ -65,6 +65,7 @@ bool ChituCamera::PowerOn() {
         s->set_hmirror(s, settings.GetInt("cam_hmirror", CAMERA_HMIRROR) ? 1 : 0);
         s->set_vflip(s, settings.GetInt("cam_vflip", CAMERA_VFLIP) ? 1 : 0);
         s->set_framesize(s, CAMERA_STREAM_FRAMESIZE);
+        s->set_quality(s, CAMERA_STREAM_QUALITY);  // smaller live frames: less Wi-Fi / CPU load
     }
     powered_ = true;
     fail_count_ = 0;
@@ -176,6 +177,7 @@ bool ChituCamera::Capture() {
     sensor_t* s = esp_camera_sensor_get();
     if (s != nullptr) {
         s->set_framesize(s, CAMERA_PHOTO_FRAMESIZE);
+        s->set_quality(s, CAMERA_PHOTO_QUALITY);
     }
     // Let the exposure settle on a fresh start, and skip frames from before the
     // size change: the photo must show "now"
@@ -208,6 +210,7 @@ bool ChituCamera::Capture() {
             }
             if ((s = esp_camera_sensor_get()) != nullptr) {
                 s->set_framesize(s, CAMERA_PHOTO_FRAMESIZE);
+                s->set_quality(s, CAMERA_PHOTO_QUALITY);
             }
             vTaskDelay(pdMS_TO_TICKS(300));
         }
@@ -237,6 +240,7 @@ bool ChituCamera::Capture() {
     esp_camera_fb_return(fb);
     if ((s = esp_camera_sensor_get()) != nullptr) {
         s->set_framesize(s, CAMERA_STREAM_FRAMESIZE);  // back to the live-view size
+        s->set_quality(s, CAMERA_STREAM_QUALITY);
     }
     Touch();
     ESP_LOGI(TAG, "Photo %dx%d JPEG, %u bytes", width_, height_, (unsigned)photo_len_);

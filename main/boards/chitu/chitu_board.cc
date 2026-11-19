@@ -5,6 +5,7 @@
 #include "assets/lang_config.h"
 #include "button.h"
 #include "config.h"
+#include "alarm_manager.h"
 #include "audio_diag.h"
 #include "remote_audio.h"
 #include "device_state_machine.h"
@@ -27,6 +28,7 @@
 #include <ssid_manager.h>
 
 #include <driver/i2c_master.h>
+#include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
@@ -52,6 +54,14 @@ public:
         : NoAudioCodecSimplexPdm(input_rate, output_rate, bclk, ws, dout, mic_clk, mic_din) {
         output_volume_ = DEFAULT_OUTPUT_VOLUME;  // used unless a volume was saved before
         input_gain_ = 0;  // gain is applied in Read() after removing the mic's DC offset
+    }
+
+    // Full volume at every start / restart (the saved volume from last time is not used).
+    // The soft limiter in Write() keeps full scale free of clipping.
+    void Start() override {
+        NoAudioCodecSimplexPdm::Start();
+        output_volume_ = DEFAULT_OUTPUT_VOLUME;
+        ESP_LOGI("ChituAudio", "Speaker volume %d%% at start-up", output_volume_);
     }
 
     int Read(int16_t* dest, int samples) override {
@@ -224,6 +234,70 @@ private:
     Button boot_button_;
     esp_timer_handle_t wifi_retry_timer_ = nullptr;
     esp_timer_handle_t diag_timer_ = nullptr;
+    esp_timer_handle_t listen_timer_ = nullptr;
+
+    // ---------------------------------------------------------------------------------
+    // Listening guard. With the AI's automatic turn-taking the server decides when you
+    // have finished speaking; if it never hears clear speech (quiet room, noise, nobody
+    // answered after Chitu spoke) Chitu could stay in "listening" for a long time.
+    // This ends a listening turn by itself, using the robot's own voice detector:
+    //   - nothing said for LISTEN_NO_SPEECH_SECONDS since listening started,
+    //   - LISTEN_AFTER_SPEECH_SECONDS of silence after you spoke with no reply yet,
+    //   - LISTEN_MAX_SECONDS in any case.
+    // Holding the talk button in the phone console is never cut short.
+    // ---------------------------------------------------------------------------------
+    struct ListenGuard {
+        bool active = false;
+        int64_t since_us = 0;
+        int64_t last_voice_us = 0;
+        bool heard = false;
+    } guard_;
+
+    void StartListenGuard() {
+        esp_timer_create_args_t args = {};
+        args.callback = [](void* arg) { static_cast<ChituBoard*>(arg)->CheckListening(); };
+        args.arg = this;
+        args.name = "listen_guard";
+        if (esp_timer_create(&args, &listen_timer_) == ESP_OK) {
+            esp_timer_start_periodic(listen_timer_, 250ULL * 1000);
+        }
+    }
+
+    void CheckListening() {
+        auto& app = Application::GetInstance();
+        int64_t now = esp_timer_get_time();
+        if (app.GetDeviceState() != kDeviceStateListening) {
+            guard_.active = false;
+            return;
+        }
+        if (!guard_.active) {
+            guard_ = {true, now, now, false};
+            return;
+        }
+        if (WebConsole::TalkHeld() || WebConsole::HoldPhoneAudio()) {
+            guard_.since_us = guard_.last_voice_us = now;  // push-to-talk: the button decides
+            return;
+        }
+        if (app.GetAudioService().IsVoiceDetected()) {
+            guard_.last_voice_us = now;
+            guard_.heard = true;
+        }
+        int silent_s = (int)((now - guard_.last_voice_us) / 1000000);
+        int total_s = (int)((now - guard_.since_us) / 1000000);
+        const char* why = nullptr;
+        if (!guard_.heard && silent_s >= LISTEN_NO_SPEECH_SECONDS) {
+            why = "nothing was said";
+        } else if (guard_.heard && silent_s >= LISTEN_AFTER_SPEECH_SECONDS) {
+            why = "silence after speech and no reply";
+        } else if (total_s >= LISTEN_MAX_SECONDS) {
+            why = "maximum listening time";
+        }
+        if (why != nullptr) {
+            ESP_LOGI(TAG, "Listening ended after %d s: %s", total_s, why);
+            guard_.active = false;
+            app.StopListening();  // sends "stop listening" and goes back to idle
+        }
+    }
 
     // Prints mic level + wake words every 30 s (Serial Monitor "DIAG" lines)
     void StartDiagnostics() {
@@ -246,6 +320,13 @@ private:
                      audio_diag::mic_clipped > 0 ? " (CLIPPING - lower MIC_GAIN)" : "",
                      audio_diag::WakeWords().c_str(),
                      DeviceStateMachine::GetStateName(app.GetDeviceState()));
+            auto* board = static_cast<ChituBoard*>(&Board::GetInstance());
+            ESP_LOGI("DIAG", "free RAM %u KB (largest %u KB), PSRAM %u KB | TOF %s | alarm %s",
+                     (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                     (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+                     (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+                     board->obstacle_.StatusJson().c_str(),
+                     AlarmManager::GetInstance().ringing() ? "RINGING" : "idle");
         };
         args.name = "diag";
         if (esp_timer_create(&args, &diag_timer_) == ESP_OK) {
@@ -444,6 +525,13 @@ private:
         // TOF10120 shares the OLED's I2C wires (optional)
         if (obstacle_.Initialize(display_i2c_bus_)) {
             motors_.SetDistanceSource([this]() { return obstacle_.distance_mm(); });
+            // Fitted sensor: forward moves need a trustworthy "clear". If it stops
+            // answering, forward is refused (turning and reversing still work).
+            motors_.SetPathSource([this]() {
+                using P = MotorController::Path;
+                if (!obstacle_.healthy()) return P::kUnknown;
+                return obstacle_.blocked() ? P::kBlocked : P::kClear;
+            });
         }
     }
 
@@ -467,6 +555,7 @@ private:
         parts.codec = GetAudioCodec();
         parts.pet = &pet_;
         parts.camera = camera_;
+        parts.obstacle = obstacle_.present() ? &obstacle_ : nullptr;
         parts.set_voice = [this](int p) { codec()->SetVoiceProfile(p); };
         parts.get_voice = [this]() { return codec()->voice_profile(); };
         web_.Start(parts);
@@ -475,6 +564,10 @@ private:
     void InitializeButtons() {
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
+            if (AlarmManager::GetInstance().ringing()) {
+                AlarmManager::GetInstance().Stop("BOOT button", false);
+                return;
+            }
             if (app.GetDeviceState() == kDeviceStateStarting) {
                 EnterWifiConfigMode();
                 return;
@@ -515,7 +608,20 @@ public:
         hooks.overlay_visible = [this]() { return eyes_ != nullptr && eyes_->OverlayVisible(); };
         hooks.owner_driving = [this]() { return web_.OwnerDriving(); };
         hooks.distance_mm = [this]() { return obstacle_.present() ? obstacle_.distance_mm() : -1; };
+        hooks.busy = []() { return AlarmManager::GetInstance().ringing(); };
         pet_.Start(&motors_, display_, hooks);
+
+        AlarmManager::Hooks ah;
+        ah.motors = &motors_;
+        ah.face = [this](const char* emotion) {
+            if (display_ != nullptr) display_->SetEmotion(emotion);
+        };
+        ah.owner_driving = [this]() { return web_.OwnerDriving(); };
+        ah.get_volume = [this]() { return codec()->output_volume(); };
+        ah.set_volume = [this](int v) { codec()->SetOutputVolume(v); };
+        AlarmManager::GetInstance().Start(ah);
+        AlarmManager::GetInstance().RegisterMcpTools();
+        StartListenGuard();
         ESP_LOGI(TAG, "Chitu board initialized");
     }
 

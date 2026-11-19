@@ -110,8 +110,10 @@ void PetMode::Start(MotorController* motors, Display* display, Hooks hooks) {
     display_ = display;
     hooks_ = std::move(hooks);
     {
-        Settings settings("chitu");
-        enabled_ = settings.GetInt("pet_on", 1) != 0;
+        Settings settings("chitu", true);
+        // Personality is always on now: forget an old "pet mode off" choice
+        settings.EraseKey("pet_on");
+        enabled_ = true;
         chatty_ = settings.GetInt("pet_chat", 1) != 0;
         moves_ = settings.GetInt("pet_moves", PET_MOVES) != 0;
     }
@@ -122,12 +124,6 @@ void PetMode::Start(MotorController* motors, Display* display, Hooks hooks) {
     next_clock_us_ = now + 60 * kSec;
     xTaskCreate([](void* arg) { static_cast<PetMode*>(arg)->Loop(); }, "chitu_pet", 4096, this, 2,
                 nullptr);
-}
-
-void PetMode::SetEnabled(bool on) {
-    enabled_ = on;
-    Settings("chitu", true).SetInt("pet_on", on ? 1 : 0);
-    Poke();
 }
 
 void PetMode::SetChatty(bool on) {
@@ -311,23 +307,14 @@ void PetMode::Loop() {
                 SetMood(Mood::kHappy, 30);
             }
         }
-        if (state != kDeviceStateIdle) {
-            last_state = state;
-            continue;  // the conversation owns the face now
+        if (state != kDeviceStateIdle || (hooks_.busy && hooks_.busy())) {
+            last_state = state == kDeviceStateIdle ? kDeviceStateUnknown : state;
+            continue;  // the conversation (or a ringing alarm) owns the face now
         }
         if (last_state != kDeviceStateIdle) {
             last_state = state;
             next_behaviour_us_ = now + RandSec(8, 15);  // a moment of calm after talking
         }
-        if (!enabled_) {
-            // Pet mode off: only the clock now and then
-            if (CLOCK_EVERY_SECONDS > 0 && now >= next_clock_us_ && hooks_.show_clock) {
-                next_clock_us_ = now + (int64_t)CLOCK_EVERY_SECONDS * kSec;
-                hooks_.show_clock();
-            }
-            continue;
-        }
-
         HandleSound(now);
         HandleMusic(now);
         HandleDistance(now);
@@ -694,22 +681,20 @@ void PetMode::DoBehaviour(int64_t now) {
 // ---------------------------------------------------------------------------
 void PetMode::RegisterMcpTools() {
     McpServer::GetInstance().AddTool(
-        "self.chitu.pet_mode",
-        "Turn Chitu's own personality on or off. When on, Chitu acts alive by itself: looks "
-        "around, makes faces, chirps, wiggles, gets bored, naps, startles at loud sounds, "
-        "dances to music and sometimes talks on its own. chatty: whether it talks on its own "
-        "(never at night). moves: whether it may wiggle and turn on the spot by itself. "
-        "Use when the user asks Chitu to be quiet, calm down, stop moving on its own, or be "
-        "more lively.",
+        "self.chitu.personality",
+        "Adjust Chitu's own personality (it is always alive: looks around, makes faces, chirps, "
+        "gets bored, naps, startles at loud sounds, dances to music). chatty: whether it talks on "
+        "its own now and then (never at night). moves: whether it may wiggle and turn on the spot "
+        "by itself. Use when the user asks Chitu to be quiet, stop moving on its own, or be more "
+        "lively.",
         PropertyList({
-            Property("enabled", kPropertyTypeBoolean, true),
             Property("chatty", kPropertyTypeBoolean, true),
             Property("moves", kPropertyTypeBoolean, true),
         }),
         [this](const PropertyList& properties) -> ReturnValue {
-            SetEnabled(properties["enabled"].value<bool>());
             SetChatty(properties["chatty"].value<bool>());
             SetMoves(properties["moves"].value<bool>());
+            Poke();
             return StatusJson();
         });
 }

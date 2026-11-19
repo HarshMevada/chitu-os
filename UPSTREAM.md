@@ -30,3 +30,7 @@ git apply --3way fix.patch   # skip parts touching removed boards
 - `main/CMakeLists.txt`: builds the detector and embeds `assets/wakeword/<model>.tflite`.
 - `main/idf_component.yml`: esp-tflite-micro + esp-micro-speech-features (only for those builds).
 - `scripts/build.py`: `--wake-word micro:<model>`.
+
+## Alarm sound
+- `main/assets/common/alarm.ogg` (new): alarm tone, generated for Chitu (two-tone beeps,
+  48 kHz Opus). Picked up by the existing common-sounds glob as `Lang::Sounds::OGG_ALARM`.

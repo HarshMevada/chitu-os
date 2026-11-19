@@ -10,18 +10,21 @@ class MotorController;
 class AudioCodec;
 class PetMode;
 class ChituCamera;
+class ObstacleSensor;
 
 // Phone control page served by Chitu on the home network.
 //   http://<robot-ip>/          redirects to the secure page (phones only allow the
 //                               microphone on https pages)
-//   https://<robot-ip>/         control page (Drive, Talk, Message, Chitu, Setup)
+//   https://<robot-ip>/         control page: camera + voice + driving on one screen,
+//                               sheets for Alarms, Message, Chitu and Setup
 //   https://<robot-ip>/cmd      drive / stop / audio / camera / settings commands
 //   https://<robot-ip>/status   JSON status for the page
 //   https://<robot-ip>/setup    JSON for the Setup tab (Wi-Fi list, place, camera, voice)
 //   https://<robot-ip>/msg      POST a text message (with emoji) for Chitu's screen
 //   https://<robot-ip>/wifi     POST add a Wi-Fi network (ssid + password)
 //   https://<robot-ip>/city     GET ?q= search a city, POST choose one
-//   wss://<robot-ip>/ws         live camera + two-way audio (one phone at a time)
+//   https://<robot-ip>/alarms   GET list, POST save / delete / switch an alarm
+//   wss://<robot-ip>/ws         live camera + two-way audio + driving (one phone at a time)
 class WebConsole {
 public:
     struct Parts {
@@ -29,6 +32,7 @@ public:
         AudioCodec* codec = nullptr;
         PetMode* pet = nullptr;
         ChituCamera* camera = nullptr;
+        ObstacleSensor* obstacle = nullptr;
         std::function<void(int profile)> set_voice;   // voice profile 0..4
         std::function<int()> get_voice;
     };
@@ -44,6 +48,8 @@ public:
     bool PhoneConnected() const { return client_fd_.load() >= 0; }
     // Push-to-talk from the phone is holding the phone's audio until Chitu listens
     static bool HoldPhoneAudio();
+    // True while the phone's talk button is held down
+    static bool TalkHeld();
 
 private:
     httpd_handle_t secure_server_ = nullptr;
@@ -65,6 +71,7 @@ private:
     bool SendBinary(int fd, uint8_t type, const void* data, size_t len);
     void SetVideo(bool on);
     void PushToTalk(bool on);
+    bool DriveJoy(int x, int y, int max_speed);  // joystick, -100..100 each
 
     static esp_err_t HandleIndex(httpd_req_t* req);
     static esp_err_t HandleCmd(httpd_req_t* req);
@@ -75,5 +82,7 @@ private:
     static esp_err_t HandleCity(httpd_req_t* req);
     static esp_err_t HandleCitySet(httpd_req_t* req);
     static esp_err_t HandleWs(httpd_req_t* req);
+    static esp_err_t HandleAlarms(httpd_req_t* req);
+    static esp_err_t HandleAlarmsSet(httpd_req_t* req);
     static esp_err_t HandleRedirect(httpd_req_t* req);
 };

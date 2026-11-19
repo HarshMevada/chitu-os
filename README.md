@@ -9,16 +9,18 @@ MAX98357 speaker, TB6612 motor driver, TOF10120 distance sensor).
 - AI voice chat (xiaozhi.me), wake word chosen on the install page
 - Animated drawn eyes, 20+ expressions with motion (bounce, shake, hearts, sleep)
 - Vision: "what do you see?" sends a camera photo to the AI
-- Driving by voice, dancing, auto-roam with obstacle stop
-- Phone console `https://<robot-ip>/`: live camera, drive pad, hold-to-talk with the phone
-  mic, Chitu's voice on the phone, room listening, text + emoji messages on the screen
-- Pet mode: looks around, pulls faces, chirps, wiggles, naps, speaks up now and then
+- Driving by voice, dancing, auto-roam; forward moves stop 100 mm before an obstacle (ToF)
+- Phone console `https://<robot-ip>/`: live camera, joystick and hold-to-talk on one screen
+  (no scrolling), Chitu's voice on the phone, room listening, text + emoji messages, alarms
+- Alarms (console or voice): tone, wake-up line, wiggles and excited eyes until you say
+  "stop alarm", press STOP ALARM or the BOOT button
+- Personality (always on): looks around, pulls faces, chirps, wiggles, naps, speaks up now and then
 - Wi-Fi auto-retry, hardware test sketches (`tests/`)
 
 ## Layout
 | Path | What |
 |---|---|
-| `main/boards/chitu/` | Everything Chitu-specific: board, eyes, motors, sensor, camera, console, pet mode. Settings in `config.h` |
+| `main/boards/chitu/` | Everything Chitu-specific: board, eyes, motors, sensor, camera, console, personality, alarms. Settings in `config.h` |
 | `main/` | Voice-assistant core (from xiaozhi-esp32): app state machine, audio, protocols, MCP tools, display |
 | `site/` | Install page (GitHub Pages) |
 | `tests/` | Arduino sketches that test one part at a time |
