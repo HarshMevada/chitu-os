@@ -1673,9 +1673,8 @@ def build_board(
         if requested_wake_word is None:
             requested_wake_word = "disabled"
             if wake_word_supported:
-                requested_wake_word = (
-                    "nihaoxiaozhi" if selected_language in {"zh-CN", "zh-TW"} else "hiesp"
-                )
+                # Chitu OS: the trained "Chitu" wake word is the only one
+                requested_wake_word = "micro:chitu"
         (
             selected_wake_word,
             wake_word_options,

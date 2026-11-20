@@ -310,8 +310,6 @@ endif()
 if(IDF_TARGET STREQUAL "esp32s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA esp_driver_usb_serial_jtag)
 endif()
-# Chitu: https phone console (microphone access needs a secure page)
-list(APPEND MAIN_PRIV_REQUIRES_EXTRA esp_https_server esp_http_server)
 # (Kconfig values are not known yet when requirements are resolved, so always required)
 list(APPEND MAIN_PRIV_REQUIRES_EXTRA espressif__esp-tflite-micro esphome__esp-micro-speech-features)
 # Chitu OS: the microWakeWord model, embedded under a fixed symbol name

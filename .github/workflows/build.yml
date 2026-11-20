@@ -1,11 +1,10 @@
 # Builds Chitu OS in the cloud and publishes the web installer on GitHub Pages.
-# Runs automatically on every change, or manually from the Actions tab
-# (there you can pick another language).
+# Every push builds the firmware; only the main branch is published.
 name: Build Chitu OS
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   workflow_dispatch:
     inputs:
       language:
@@ -18,66 +17,34 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   firmware:
-    name: Firmware (${{ matrix.label }})
+    name: Firmware
     runs-on: ubuntu-latest
     container:
       image: espressif/idf:release-v6.1
-    strategy:
-      fail-fast: false
-      matrix:
-        # One firmware per wake word. Words whose model is missing simply fail
-        # here and are left out of the installer's wake word menu.
-        include:
-          - { key: wn9_hiesp, model: wn9_hiesp,         label: "Hi ESP" }
-          - { key: wn9_alexa, model: wn9_alexa,         label: "Alexa" }
-          - { key: wn9_hiwalle_tts2, model: wn9_hiwalle_tts2,  label: "Hi Wall-E" }
-          - { key: wn9_jarvis_tts, model: wn9_jarvis_tts,    label: "Jarvis" }
-          - { key: wn9_hijason_tts2, model: wn9_hijason_tts2,  label: "Hi Jason" }
-          - { key: wn9_sophia_tts, model: wn9_sophia_tts,    label: "Sophia" }
-          - { key: wn9_computer_tts, model: wn9_computer_tts,  label: "Computer" }
-          - { key: wn9_hijoy_tts, model: wn9_hijoy_tts,     label: "Hi Joy" }
-          - { key: wn9_hiandy_tts2, model: wn9_hiandy_tts2,   label: "Hi Andy" }
-          - { key: wn9_heywillow_tts, model: wn9_heywillow_tts, label: "Hey Willow" }
-          - { key: wn9_mycroft_tts, model: wn9_mycroft_tts,   label: "Mycroft" }
-          - { key: wn9_heykira_tts3, model: wn9_heykira_tts3,  label: "Hey Kira" }
-          # Custom phrases (MultiNet, no training). Retried now that the mic DC offset is fixed.
-          - { key: custom_hey_chitu,   model: "custom:hey chitu",   label: "Hey Chitu" }
-          - { key: custom_hello_chitu, model: "custom:hello chitu", label: "Hello Chitu" }
-          # Trained wake words (microWakeWord). "Chitu" appears once its model is trained.
-          - { key: micro_chitu,     model: "micro:chitu",     label: "Chitu (trained)" }
-          - { key: micro_okay_nabu, model: "micro:okay_nabu", label: "Okay Nabu (engine test)" }
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v7
 
-      - name: Create the phone console certificate
-        shell: bash
-        run: |
-          git config --global --add safe.directory '*'
-          # self-signed certificate for the https phone console (needed for the phone mic)
-          command -v openssl >/dev/null || (apt-get update -qq && apt-get install -y -qq openssl)
-          python3 main/boards/chitu/tools/make_cert.py main/boards/chitu/chitu_cert.h
-
-      - name: Build
+      - name: Build (wake word "Chitu")
         shell: bash
         env:
           LANG_CODE: ${{ inputs.language || 'en-US' }}
         run: |
+          git config --global --add safe.directory '*'
           source "$IDF_PATH/export.sh"
-          python scripts/build.py chitu --language "$LANG_CODE" --wake-word "${{ matrix.model }}"
+          python scripts/build.py chitu --language "$LANG_CODE" --wake-word "micro:chitu"
 
-      - name: Decode crash backtrace (debug/backtrace.txt)
-        if: matrix.model == 'wn9_hiesp' && hashFiles('debug/backtrace.txt') != ''
+      - name: Firmware size
+        continue-on-error: true
         shell: bash
         run: |
           source "$IDF_PATH/export.sh" > /dev/null
-          echo "=== decoded backtrace ==="
-          xtensa-esp32s3-elf-addr2line -pfiaC -e build/chitu.elf $(cat debug/backtrace.txt)
+          idf.py -B build size | tail -25
 
       - name: Collect flash parts
         shell: bash
@@ -86,132 +53,63 @@ jobs:
           python3 - <<'PY'
           import json, os, shutil
           args = json.load(open("build/flasher_args.json"))
-          out = "out/${{ matrix.key }}"
-          os.makedirs(out, exist_ok=True)
+          os.makedirs("out", exist_ok=True)
           parts = []
           for offset, path in sorted(args["flash_files"].items(), key=lambda kv: int(kv[0], 16)):
               name = os.path.basename(path)
-              shutil.copy(os.path.join("build", path), os.path.join(out, name))
+              shutil.copy(os.path.join("build", path), os.path.join("out", name))
               parts.append({"path": name, "offset": int(offset, 16)})
-          json.dump({"label": "${{ matrix.label }}", "model": "${{ matrix.key }}", "parts": parts},
-                    open(os.path.join(out, "parts.json"), "w"))
+          json.dump(parts, open("out/parts.json", "w"))
           print(parts)
           PY
-
-      - name: Save ELF (for decoding crashes)
-        if: matrix.model == 'wn9_hiesp'
-        uses: actions/upload-artifact@v7
-        with:
-          name: chitu-elf
-          path: build/chitu.elf
+          cp build/chitu.elf out/chitu.elf
 
       - name: Save firmware
         uses: actions/upload-artifact@v7
         with:
-          name: chitu-fw-${{ matrix.key }}
+          name: chitu-firmware
           path: out
-          if-no-files-found: error
-
-  tests:
-    name: Build hardware test sketches
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout this repo
-        uses: actions/checkout@v7
-
-      - name: Install Arduino CLI
-        uses: arduino/setup-arduino-cli@v2
-
-      - name: Install ESP32 core and U8g2
-        run: |
-          arduino-cli config init --overwrite
-          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-          arduino-cli core update-index
-          arduino-cli core install esp32:esp32
-          arduino-cli lib install U8g2
-
-      - name: Compile tests
-        shell: bash
-        run: |
-          set -e
-          FQBN="esp32:esp32:XIAO_ESP32S3:USBMode=hwcdc,CDCOnBoot=default,PSRAM=opi"
-          mkdir -p out
-          for dir in tests/*/; do
-            name=$(basename "$dir")
-            echo "::group::$name"
-            arduino-cli compile --fqbn "$FQBN" --warnings default --export-binaries --output-dir "build/$name" "$dir"
-            cp "build/$name/$name.ino.merged.bin" "out/$name.bin"
-            echo "::endgroup::"
-          done
-          ls -la out
-
-      - name: Save test binaries
-        uses: actions/upload-artifact@v7
-        with:
-          name: chitu-tests
-          path: out/*.bin
           if-no-files-found: error
 
   site:
     name: Prepare installer page
-    needs: [firmware, tests]
-    if: ${{ !cancelled() && needs.tests.result == 'success' }}
+    needs: firmware
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout this repo
         uses: actions/checkout@v7
 
-      - name: Get firmware builds
+      - name: Get firmware
         uses: actions/download-artifact@v8
         with:
-          pattern: chitu-fw-*
-          merge-multiple: true
+          name: chitu-firmware
           path: site/firmware
 
-      - name: Get test binaries
-        uses: actions/download-artifact@v8
-        with:
-          name: chitu-tests
-          path: site/tests
-
-      - name: Write manifests and wake word menu
+      - name: Write manifest and version
         shell: bash
         run: |
-          VERSION="$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
-          VERSION="$VERSION" python3 - <<'PY'
-          import json, os, glob
-          version = os.environ["VERSION"]
-          order = ["wn9_hiesp", "custom_hey_chitu", "custom_hello_chitu", "wn9_alexa", "wn9_hiwalle_tts2", "wn9_jarvis_tts", "wn9_hijason_tts2",
-                   "wn9_sophia_tts", "wn9_computer_tts", "wn9_hijoy_tts", "wn9_hiandy_tts2",
-                   "wn9_heywillow_tts", "wn9_mycroft_tts", "wn9_heykira_tts3"]
-          words = []
-          for f in glob.glob("site/firmware/*/parts.json"):
-              info = json.load(open(f))
-              model = info["model"]
-              manifest = {
-                  "name": "Chitu (" + info["label"] + ")",
-                  "version": version,
-                  "new_install_prompt_erase": True,
-                  "builds": [{"chipFamily": "ESP32-S3", "improv": False,
-                              "parts": [{"path": "firmware/%s/%s" % (model, p["path"]), "offset": p["offset"]}
-                                        for p in info["parts"]]}],
-              }
-              json.dump(manifest, open("site/manifest-%s.json" % model, "w"), indent=2)
-              words.append({"model": model, "label": info["label"]})
-          words.sort(key=lambda w: order.index(w["model"]) if w["model"] in order else 99)
-          if not words:
-              raise SystemExit("no firmware was built")
-          # default install button = first word (Hi ESP)
-          os.system("cp site/manifest-%s.json site/manifest.json" % words[0]["model"])
-          json.dump(words, open("site/wakewords.json", "w"))
-          print("wake words:", [w["label"] for w in words])
+          # The version comes from one place: PROJECT_VER / CHITU_RELEASE_NAME in CMakeLists.txt
+          VER=$(sed -n 's/^set(PROJECT_VER "\(.*\)")/\1/p' CMakeLists.txt)
+          REL=$(sed -n 's/^set(CHITU_RELEASE_NAME "\(.*\)")/\1/p' CMakeLists.txt)
+          test -n "$VER"
+          rm -f site/firmware/chitu.elf
+          VER="$VER" REL="$REL" python3 - <<'PY'
+          import json, os
+          ver, rel = os.environ["VER"], os.environ["REL"]
+          parts = json.load(open("site/firmware/parts.json"))
+          manifest = {
+              "name": "Chitu",
+              "version": ver,
+              "new_install_prompt_erase": False,
+              "builds": [{"chipFamily": "ESP32-S3", "improv": False,
+                          "parts": [{"path": "firmware/" + p["path"], "offset": p["offset"]} for p in parts]}],
+          }
+          json.dump(manifest, open("site/manifest.json", "w"), indent=2)
+          json.dump({"version": ver, "release": rel}, open("site/version.json", "w"))
           PY
-          sed -i "s/__VERSION__/$VERSION/g" site/index.html
-          for bin in site/tests/*.bin; do
-            name=$(basename "$bin" .bin)
-            printf '{"name":"Chitu %s","version":"%s","new_install_prompt_erase":false,"builds":[{"chipFamily":"ESP32-S3","parts":[{"path":"%s.bin","offset":0}]}]}\n' "$name" "$VERSION" "$name" > "site/tests/$name.json"
-          done
-          ls -la site site/firmware/*
+          sed -i "s/__VERSION__/$VER/g; s/__RELEASE__/$REL/g; s/__BUILD__/${GITHUB_SHA::7}/g" site/index.html
+          ls -la site site/firmware
 
       - name: Package page
         uses: actions/upload-pages-artifact@v5
@@ -221,7 +119,6 @@ jobs:
   deploy:
     name: Publish to GitHub Pages
     needs: site
-    if: ${{ !cancelled() && needs.site.result == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

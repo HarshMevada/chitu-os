@@ -6,13 +6,10 @@
 ## Changes made on import
 - Removed all boards except `main/boards/common`; added `main/boards/chitu`
 - `main/Kconfig.projbuild`: board choice reduced to `BOARD_TYPE_CHITU`; options of removed boards deleted
-- `main/CMakeLists.txt`: board selection reduced to Chitu; board-specific blocks removed;
-  `esp_https_server` added for the phone console
+- `main/CMakeLists.txt`: board selection reduced to Chitu; board-specific blocks removed
 - Project renamed `chitu` (version 1.0.0); Wi-Fi setup hotspot prefix `Chitu`
 - Removed upstream CI, docker, release scripts, script tests, other-chip sdkconfig defaults
 - `scripts/build.py`: only the OLED display choice is looked up (LCD choice removed)
-- `main/ota.cc`: for Chitu the server time is stored as real UTC (the server's time zone
-  offset is not added); Chitu applies the time zone of its configured city itself
 
 ## Pulling a fix from upstream later
 ```
@@ -29,8 +26,4 @@ git apply --3way fix.patch   # skip parts touching removed boards
 - `main/Kconfig.projbuild`: `USE_MICRO_WAKE_WORD`, `MICRO_WAKE_WORD_MODEL/DISPLAY/CUTOFF`.
 - `main/CMakeLists.txt`: builds the detector and embeds `assets/wakeword/<model>.tflite`.
 - `main/idf_component.yml`: esp-tflite-micro + esp-micro-speech-features (only for those builds).
-- `scripts/build.py`: `--wake-word micro:<model>`.
-
-## Alarm sound
-- `main/assets/common/alarm.ogg` (new): alarm tone, generated for Chitu (two-tone beeps,
-  48 kHz Opus). Picked up by the existing common-sounds glob as `Lang::Sounds::OGG_ALARM`.
+- `scripts/build.py`: `--wake-word micro:<model>`; default wake word `micro:chitu`.

@@ -9,5 +9,9 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
 idf_build_set_property(MINIMAL_BUILD ON)
 
+# ---- Chitu firmware version: the ONLY place to change it ----
+# Shown at start-up on the OLED, sent to the Xiaozhi server, and printed on the
+# install page as "Chitu v<PROJECT_VER> - <CHITU_RELEASE_NAME>".
 set(PROJECT_VER "1.0.0")
+set(CHITU_RELEASE_NAME "Stable Baseline")
 project(chitu)
